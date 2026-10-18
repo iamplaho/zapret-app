@@ -1,10 +1,9 @@
-"""Автообновление самой программы через GitHub Releases.
+"""Автообновление самой программы через страницу релиза на GitHub.
 
-Программа берёт последний релиз репозитория, скачивает установщик
-zapret-app-setup-<версия>.exe и запускает его. Установщик сам останавливает обход
-и заменяет файлы программы. Скачивать разрешено только с адреса этого репозитория.
+Не используется GitHub API: у него жёсткий лимит запросов (403 rate limit).
+Вместо этого программа открывает /releases/latest, узнаёт тег последнего релиза
+по адресу перенаправления и скачивает установщик по известному имени файла.
 """
-import json
 import os
 import re
 import subprocess
@@ -17,13 +16,14 @@ from pathlib import Path
 from . import __version__
 
 REPO = "iamplaho/zapret-app"
-API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
+LATEST_URL = f"https://github.com/{REPO}/releases/latest"
+DOWNLOAD_BASE = f"https://github.com/{REPO}/releases/download/"
 ASSET_PREFIX = "zapret-app-setup-"
-DOWNLOAD_PREFIX = f"https://github.com/{REPO}/releases/download/"
 TIMEOUT = 20
 MIN_INSTALLER_SIZE = 1_000_000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
+TAG_RE = re.compile(r"/releases/tag/([^/?#]+)$")
 
 
 @dataclass
@@ -43,35 +43,39 @@ def is_newer(remote: str, local: str = __version__) -> bool:
     return r is not None and l is not None and r > l
 
 
-def pick_asset(assets):
-    for asset in assets or []:
-        name = asset.get("name", "")
-        url = asset.get("browser_download_url", "")
-        if name.startswith(ASSET_PREFIX) and name.endswith(".exe") and url.startswith(DOWNLOAD_PREFIX):
-            return asset
-    return None
+def tag_from_url(url: str):
+    """Достаёт тег релиза из адреса вида .../releases/tag/v0.4.0."""
+    match = TAG_RE.search(url or "")
+    return match.group(1) if match else None
 
 
-def _get_json(url: str):
-    req = urllib.request.Request(url, headers={"User-Agent": "zapret-app",
-                                               "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def _open(url: str, method: str = "HEAD"):
+    req = urllib.request.Request(url, method=method, headers={"User-Agent": "zapret-app"})
+    return urllib.request.urlopen(req, timeout=TIMEOUT)
 
 
 def fetch_latest():
-    """Возвращает ReleaseInfo или None, если релизов с установщиком нет."""
+    """Возвращает ReleaseInfo или None, если релиза с установщиком нет."""
     try:
-        data = _get_json(API_LATEST)
+        with _open(LATEST_URL) as resp:
+            tag = tag_from_url(resp.geturl())
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return None
         raise
-    asset = pick_asset(data.get("assets"))
-    if asset is None:
+    if not tag:
         return None
-    return ReleaseInfo(version=str(data.get("tag_name", "")).lstrip("v"),
-                       name=asset["name"], url=asset["browser_download_url"])
+    version = tag.lstrip("v")
+    name = f"{ASSET_PREFIX}{version}.exe"
+    url = f"{DOWNLOAD_BASE}{tag}/{name}"
+    try:
+        with _open(url):
+            pass
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None  # релиз есть, а установщика в нём нет
+        raise
+    return ReleaseInfo(version=version, name=name, url=url)
 
 
 def download(info: ReleaseInfo) -> Path:
@@ -79,8 +83,7 @@ def download(info: ReleaseInfo) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / info.name
     tmp = dest.with_suffix(".part")
-    req = urllib.request.Request(info.url, headers={"User-Agent": "zapret-app"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp, open(tmp, "wb") as out:
+    with _open(info.url, method="GET") as resp, open(tmp, "wb") as out:
         while True:
             chunk = resp.read(64 * 1024)
             if not chunk:

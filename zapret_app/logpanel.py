@@ -1,7 +1,7 @@
-"""Нижняя панель журнала: последние события, кнопки «Развернуть» и «Очистить»."""
+"""Панель журнала: цветные строки, кнопки «Развернуть» и «Очистить»."""
 import customtkinter as ctk
 
-from .theme import BG, CARD, CARD_HI, FONT, SOFT, TEXT, TRACK
+from .theme import BG, CARD, CARD_HI, FONT, LOG_COLORS, SOFT, TEXT, TRACK
 
 
 def _font(size, weight="normal"):
@@ -9,32 +9,39 @@ def _font(size, weight="normal"):
 
 
 def small_button():
-    return dict(fg_color=CARD_HI, hover_color=TRACK, text_color=TEXT, font=_font(11), corner_radius=8)
+    return dict(fg_color=CARD_HI, hover_color=TRACK, text_color=TEXT, font=_font(11),
+                corner_radius=10, bg_color=CARD)
 
 
 class LogPanel(ctk.CTkFrame):
-    def __init__(self, master, on_expand, on_clear):
-        super().__init__(master, fg_color=CARD, corner_radius=16)
-        header = ctk.CTkFrame(self, fg_color="transparent")
+    def __init__(self, master, on_toggle, on_clear):
+        super().__init__(master, fg_color=CARD, corner_radius=18)
+        header = ctk.CTkFrame(self, fg_color=CARD, corner_radius=0)
         header.pack(fill="x", padx=14, pady=(10, 0))
-        ctk.CTkLabel(header, text="Журнал", font=_font(11, "bold"), text_color=SOFT).pack(side="left")
-        ctk.CTkButton(header, text="Очистить", width=84, height=24,
+        ctk.CTkLabel(header, text="Журнал (log)", font=_font(11, "bold"), text_color=SOFT).pack(side="left")
+        ctk.CTkButton(header, text="Очистить", width=88, height=26,
                       command=on_clear, **small_button()).pack(side="right")
-        ctk.CTkButton(header, text="Развернуть", width=96, height=24,
-                      command=on_expand, **small_button()).pack(side="right", padx=(0, 6))
-        self.box = ctk.CTkTextbox(self, height=84, corner_radius=10, fg_color=BG, text_color=SOFT,
+        self.expand_btn = ctk.CTkButton(header, text="Развернуть", width=104, height=26,
+                                        command=on_toggle, **small_button())
+        self.expand_btn.pack(side="right", padx=(0, 6))
+        self.box = ctk.CTkTextbox(self, corner_radius=12, fg_color=BG, border_width=0,
+                                  text_color=TEXT, bg_color=CARD,
                                   font=ctk.CTkFont(family="Consolas", size=11), state="disabled")
-        self.box.pack(fill="both", expand=True, padx=10, pady=(6, 10))
+        self.box.pack(fill="both", expand=True, padx=12, pady=(8, 12))
+        self._text = self.box._textbox  # tk.Text: нужен для цветных тегов
+        for tag, color in LOG_COLORS.items():
+            self._text.tag_configure(tag, foreground=color)
 
-    def append(self, line: str) -> None:
+    def append(self, line: str, tag: str = "default") -> None:
         self.box.configure(state="normal")
-        self.box.insert("end", line)
-        self.box.see("end")
+        self._text.insert("end", line, tag if tag in LOG_COLORS else "default")
+        self._text.see("end")
         self.box.configure(state="disabled")
 
     def set_text(self, text: str) -> None:
         self.box.configure(state="normal")
-        self.box.delete("1.0", "end")
-        self.box.insert("end", text)
-        self.box.see("end")
+        self._text.delete("1.0", "end")
         self.box.configure(state="disabled")
+
+    def set_expanded(self, flag: bool) -> None:
+        self.expand_btn.configure(text="Свернуть" if flag else "Развернуть")

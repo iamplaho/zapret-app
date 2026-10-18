@@ -1,7 +1,7 @@
 """Зона включения: круг по центру и летающие частицы вокруг него.
 
-Частицы считаются только когда зона видна (главная вкладка, окно не свёрнуто).
-В трее и на других вкладках анимация полностью останавливается, чтобы не нагружать ПК.
+Кликабельна только область самого круга. Частицы считаются только когда зона видна
+(главная вкладка, окно не свёрнуто), чтобы не нагружать ПК.
 """
 import math
 import random
@@ -14,6 +14,7 @@ H = 220
 CX = W / 2
 CY = H / 2
 RADIUS = 56
+HIT_RADIUS = RADIUS + 6   # область клика — ровно круг с небольшим запасом
 PARTICLES = 30
 FRAME_MS = 33
 PULSE_HIGH = "#e4e4e7"
@@ -23,7 +24,7 @@ class PowerCircle(tk.Canvas):
     """Состояния: off, starting, on, stopping."""
 
     def __init__(self, master, command):
-        super().__init__(master, width=W, height=H, bg=BG, highlightthickness=0, bd=0, cursor="hand2")
+        super().__init__(master, width=W, height=H, bg=BG, highlightthickness=0, bd=0)
         self._command = command
         self._state = "off"
         self._core = hex_to_rgb(TRACK)
@@ -34,7 +35,23 @@ class PowerCircle(tk.Canvas):
         self._job = None
         self._particles = [self._new_particle() for _ in range(PARTICLES)]
         self.bind("<Button-1>", self._on_click)
+        self.bind("<Motion>", self._on_motion)
+        self.bind("<Leave>", lambda _e: self.configure(cursor=""))
         self._draw()
+
+    # ---------- зона клика ----------
+
+    @staticmethod
+    def _inside(x, y) -> bool:
+        return (x - CX) ** 2 + (y - CY) ** 2 <= HIT_RADIUS ** 2
+
+    def _on_motion(self, event):
+        self.configure(cursor="hand2" if self._inside(event.x, event.y) else "")
+
+    def _on_click(self, event):
+        if self._inside(event.x, event.y):
+            self._press = 1.0
+            self._command()
 
     # ---------- управление анимацией ----------
 
@@ -42,7 +59,6 @@ class PowerCircle(tk.Canvas):
         self._state = state
 
     def set_active(self, flag: bool) -> None:
-        """Включает или выключает анимацию. Выключенная анимация не тратит ресурсы."""
         if flag and not self._active:
             self._active = True
             self._tick()
@@ -51,10 +67,6 @@ class PowerCircle(tk.Canvas):
             if self._job is not None:
                 self.after_cancel(self._job)
                 self._job = None
-
-    def _on_click(self, _event):
-        self._press = 1.0
-        self._command()
 
     # ---------- частицы ----------
 

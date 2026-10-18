@@ -58,18 +58,11 @@ class UpdaterTest(unittest.TestCase):
         self.assertFalse(app_updater.is_newer("0.3.0", "0.3.0"))
         self.assertFalse(app_updater.is_newer("0.2.9", "0.3.0"))
 
-    def test_pick_asset_takes_only_setup_from_own_repo(self):
-        base = "https://github.com/iamplaho/zapret-app/releases/download/v0.3.1/"
-        assets = [
-            {"name": "zapret-app-portable-0.3.1.zip", "browser_download_url": base + "p.zip"},
-            {"name": "zapret-app-setup-0.3.1.exe", "browser_download_url": base + "zapret-app-setup-0.3.1.exe"},
-        ]
-        self.assertEqual(app_updater.pick_asset(assets)["name"], "zapret-app-setup-0.3.1.exe")
-
-    def test_pick_asset_rejects_foreign_domain(self):
-        assets = [{"name": "zapret-app-setup-9.9.9.exe",
-                   "browser_download_url": "https://evil.example.com/zapret-app-setup-9.9.9.exe"}]
-        self.assertIsNone(app_updater.pick_asset(assets))
+    def test_installer_url_is_built_from_tag(self):
+        self.assertIn("/releases/download/v0.4.0/zapret-app-setup-0.4.0.exe", 
+                      app_updater.DOWNLOAD_BASE + "v0.4.0/" + app_updater.ASSET_PREFIX + "0.4.0.exe")
+        self.assertTrue(app_updater.LATEST_URL.startswith("https://github.com/"))
+        self.assertNotIn("api.github.com", app_updater.LATEST_URL)
 
 
 class IpsetModeTest(unittest.TestCase):
@@ -166,6 +159,13 @@ class AssetsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReleaseUrlTest(unittest.TestCase):
+    def test_tag_from_release_url(self):
+        url = "https://github.com/iamplaho/zapret-app/releases/tag/v0.4.0"
+        self.assertEqual(app_updater.tag_from_url(url), "v0.4.0")
+        self.assertIsNone(app_updater.tag_from_url("https://github.com/iamplaho/zapret-app/releases"))
 
 
 class VersionTest(unittest.TestCase):
