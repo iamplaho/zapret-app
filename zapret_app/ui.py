@@ -62,12 +62,12 @@ def font(size, weight="normal"):
 
 def primary_button(bg=BG):
     return dict(fg_color=WHITE, hover_color="#e4e4e7", text_color=BLACK, font=font(13, "bold"),
-                corner_radius=14, bg_color=bg)
+                corner_radius=0, bg_color=bg)
 
 
 def secondary_button(bg=BG):
     return dict(fg_color=CARD_HI, hover_color=TRACK, text_color=TEXT, font=font(13),
-                corner_radius=14, bg_color=bg)
+                corner_radius=0, bg_color=bg)
 
 
 def switch_style(bg=CARD):
@@ -78,12 +78,12 @@ def switch_style(bg=CARD):
 def menu_style(bg=CARD):
     return dict(fg_color=CARD_HI, button_color=TRACK, button_hover_color="#52525b", text_color=TEXT,
                 dropdown_fg_color=CARD, dropdown_hover_color=CARD_HI, dropdown_text_color=TEXT,
-                font=font(13), dropdown_font=font(13), corner_radius=12, bg_color=bg)
+                font=font(13), dropdown_font=font(13), corner_radius=0, bg_color=bg)
 
 
 def entry_style(bg=CARD):
     return dict(fg_color=CARD_HI, border_width=0, text_color=TEXT, font=font(13),
-                corner_radius=12, bg_color=bg)
+                corner_radius=0, bg_color=bg)
 
 
 class App(ctk.CTk):
@@ -215,7 +215,7 @@ class App(ctk.CTk):
     def _build(self):
         self.tabs = ctk.CTkSegmentedButton(
             self, values=["Главная", "Настройки", "Сервис"], command=self._show_tab, height=40,
-            corner_radius=14, font=font(13), fg_color=CARD, selected_color=TRACK,
+            corner_radius=0, font=font(13), fg_color=CARD, selected_color=TRACK,
             selected_hover_color="#52525b", unselected_color=CARD, unselected_hover_color=CARD_HI,
             text_color=TEXT, bg_color=BG)
         self.logpanel = LogPanel(self, on_toggle=self.toggle_log, on_clear=self.clear_log)
@@ -258,7 +258,7 @@ class App(ctk.CTk):
                                       scrollbar_button_color=TRACK, scrollbar_button_hover_color="#52525b")
 
     def _card(self, parent, **pack):
-        frame = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=18)
+        frame = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=0)
         frame.pack(fill="x", **pack)
         return frame
 
@@ -281,7 +281,7 @@ class App(ctk.CTk):
         self.circle = PowerCircle(f, self.toggle)
         self.circle.pack(pady=(0, 4))
 
-        self.progress = ctk.CTkProgressBar(f, mode="indeterminate", height=4, corner_radius=2,
+        self.progress = ctk.CTkProgressBar(f, mode="indeterminate", height=4, corner_radius=0,
                                            progress_color=WHITE, fg_color=CARD_HI, bg_color=BG)
 
         card = self._card(f, pady=(4, 10))
@@ -300,7 +300,7 @@ class App(ctk.CTk):
                                       command=self.test_all, **secondary_button())
         self.best_btn.pack(fill="x")
 
-        self.banner = ctk.CTkFrame(f, fg_color=CARD, corner_radius=16)
+        self.banner = ctk.CTkFrame(f, fg_color=CARD, corner_radius=0)
         self.banner_label = ctk.CTkLabel(self.banner, text="", font=font(12), text_color=TEXT,
                                          justify="left", anchor="w")
         self.banner_label.pack(side="left", padx=16, pady=12, fill="x", expand=True)
