@@ -1,9 +1,9 @@
 ; Скрипт установщика Inno Setup 6.
-; Сборка: ISCC.exe /DAppVersion=0.2.0 installer\zapret-app.iss
+; Сборка: ISCC.exe /DAppVersion=0.3.0 installer\zapret-app.iss
 ; Нужна папка dist\zapret-app, которую создаёт PyInstaller (zapret-app.spec).
 
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.3.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist\zapret-app"

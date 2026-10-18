@@ -9,10 +9,13 @@ DEFAULTS = {
     "game_mode": "off",          # off | all | tcp | udp
     "game_tcp": "1024-65535",
     "game_udp": "1024-65535",
+    "start_bypass": True,        # включать обход при открытии программы
+    "auto_fix": False,           # сам подбирать стратегию, если Discord и YouTube перестали открываться
     "auto_update": True,         # обновление списков
     "auto_update_app": True,     # обновление самой программы
-    "autostart": False,
-    "close_to_tray": True,
+    "autostart": False,          # запуск вместе с Windows
+    "close_to_tray": True,       # крестик сворачивает в трей
+    "first_run": True,           # первый запуск: подобрать стратегию автоматически
     "resume_bypass": False,      # включить обход после перезапуска (нужно для обновления)
     "lists_version": "",
     "last_check": "",
@@ -27,6 +30,9 @@ def load() -> dict:
             # старая настройка game_filter=true переходит в режим «TCP и UDP»
             if "game_mode" not in stored and stored.get("game_filter"):
                 stored["game_mode"] = "all"
+            # у тех, кто уже пользовался программой, первый запуск уже пройден
+            if "first_run" not in stored:
+                stored["first_run"] = False
             data.update({k: v for k, v in stored.items() if k in DEFAULTS})
     except (OSError, json.JSONDecodeError):
         pass

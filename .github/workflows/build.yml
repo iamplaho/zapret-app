@@ -19,6 +19,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Determine version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $v = $env:GITHUB_REF_NAME.TrimStart('v')
+          } else {
+            $v = 'dev-' + $env:GITHUB_SHA.Substring(0, 7)
+          }
+          "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Output "Версия сборки: $v"
+
+      - name: Write build version file
+        shell: pwsh
+        run: |
+          [System.IO.File]::WriteAllText("zapret_app/_build_version.py", "VERSION = '$env:VERSION'`n")
+
       - name: Install dependencies
         run: python -m pip install -r requirements.txt pyinstaller
 
@@ -34,16 +50,10 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -like 'refs/tags/v*') {
-            $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          } else {
-            $version = '0.3.0-dev'
-          }
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          & $iscc "/DAppVersion=$version" "installer\zapret-app.iss"
+          & $iscc "/DAppVersion=$env:VERSION" "installer\zapret-app.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with code $LASTEXITCODE" }
           Get-ChildItem installer-output
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Upload installer
         uses: actions/upload-artifact@v4

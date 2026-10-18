@@ -166,3 +166,10 @@ class AssetsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VersionTest(unittest.TestCase):
+    def test_version_is_defined(self):
+        from zapret_app import __version__
+        self.assertTrue(__version__)
+        self.assertIsNotNone(app_updater.parse_version(__version__) or "dev" in __version__)
