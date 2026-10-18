@@ -6,10 +6,14 @@ from . import paths
 
 DEFAULTS = {
     "strategy": "general",
-    "game_filter": False,
-    "auto_update": True,
+    "game_mode": "off",          # off | all | tcp | udp
+    "game_tcp": "1024-65535",
+    "game_udp": "1024-65535",
+    "auto_update": True,         # обновление списков
+    "auto_update_app": True,     # обновление самой программы
     "autostart": False,
     "close_to_tray": True,
+    "resume_bypass": False,      # включить обход после перезапуска (нужно для обновления)
     "lists_version": "",
     "last_check": "",
 }
@@ -20,6 +24,9 @@ def load() -> dict:
     try:
         stored = json.loads(paths.SETTINGS_FILE.read_text(encoding="utf-8"))
         if isinstance(stored, dict):
+            # старая настройка game_filter=true переходит в режим «TCP и UDP»
+            if "game_mode" not in stored and stored.get("game_filter"):
+                stored["game_mode"] = "all"
             data.update({k: v for k, v in stored.items() if k in DEFAULTS})
     except (OSError, json.JSONDecodeError):
         pass

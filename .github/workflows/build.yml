@@ -1,4 +1,4 @@
-name: Build Windows app
+name: Build Windows installer
 
 on:
   push:
@@ -37,7 +37,7 @@ jobs:
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
             $version = $env:GITHUB_REF_NAME.TrimStart('v')
           } else {
-            $version = '0.2.0-dev'
+            $version = '0.3.0-dev'
           }
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           & $iscc "/DAppVersion=$version" "installer\zapret-app.iss"
@@ -45,22 +45,14 @@ jobs:
           Get-ChildItem installer-output
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Pack portable zip
-        shell: pwsh
-        run: Compress-Archive -Path dist/zapret-app/* -DestinationPath "zapret-app-portable-$env:VERSION.zip"
-
-      - name: Upload artifacts
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: zapret-app-${{ env.VERSION }}
-          path: |
-            installer-output/*.exe
-            zapret-app-portable-*.zip
+          name: zapret-app-setup-${{ env.VERSION }}
+          path: installer-output/*.exe
 
       - name: Publish release on tag
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            installer-output/*.exe
-            zapret-app-portable-*.zip
+          files: installer-output/*.exe

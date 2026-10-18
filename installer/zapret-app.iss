@@ -50,9 +50,12 @@ Name: "{group}\Удалить zapret-app"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\zapret-app"; Filename: "{app}\zapret-app.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\zapret-app.exe"; Description: "Запустить zapret-app"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\zapret-app.exe"; Description: "Запустить zapret-app"; Flags: nowait postinstall shellexec
 
 [UninstallRun]
+; Удаляем службу zapret и драйвер WinDivert, если они были установлены из программы.
+Filename: "{cmd}"; Parameters: "/c sc stop zapret & sc delete zapret & exit /b 0"; Flags: runhidden; RunOnceId: "RemoveZapretService"
+Filename: "{cmd}"; Parameters: "/c sc stop WinDivert & sc delete WinDivert & sc stop WinDivert14 & sc delete WinDivert14 & exit /b 0"; Flags: runhidden; RunOnceId: "RemoveWinDivert"
 ; Убираем задачу автозапуска. Ошибка, если задачи нет, не должна мешать удалению.
 Filename: "{cmd}"; Parameters: "/c schtasks /Delete /TN zapret-app-autostart /F >nul 2>&1 & exit /b 0"; Flags: runhidden; RunOnceId: "RemoveAutostart"
 

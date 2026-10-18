@@ -1,53 +1,95 @@
-"""Главное окно приложения."""
+"""Главное окно: монохромный интерфейс фиксированного размера."""
 import datetime as dt
+import os
 import queue
 import sys
+import threading
 import tkinter as tk
 
 import customtkinter as ctk
-from PIL import Image
 
-from . import __version__, engine, paths, settings, strategies, system, updater
+from . import __version__, app_updater, diagnostics, engine, fakes, hosts, paths, settings, strategies
+from . import system, tester, updater
+from .power_circle import PowerCircle
+from .theme import BG, BORDER, CARD, CARD_HI, FONT, MUTED, SOFT, TEXT, TRACK, WHITE, BLACK
 
 try:
     from .tray import Tray
-except Exception:  # noqa: BLE001  pystray недоступен — приложение работает без трея
+except Exception:  # noqa: BLE001  pystray недоступен — работаем без трея
     Tray = None
 
-GREEN = "#22c55e"
-RED = "#ef4444"
-MUTED = "#94a3b8"
-CARD = "#1e293b"
-ACCENT = "#6366f1"
+WIDTH, HEIGHT = 440, 740
 
-SWITCH_LABELS = {
-    "game_filter": "Игровой фильтр",
-    "auto_update": "Автообновление списков",
-    "autostart": "Автозапуск",
-    "close_to_tray": "Сворачивание в трей",
+STATE_TEXT = {"off": "Выключено", "starting": "Запуск…", "on": "Работает", "stopping": "Остановка…"}
+STATE_HINT = {
+    "off": "Нажмите на круг, чтобы включить обход",
+    "starting": "Подождите, обход запускается",
+    "on": "Обход активен. Нажмите на круг, чтобы выключить",
+    "stopping": "Останавливаю обход",
 }
+GAME_LABELS = {"off": "Выключен", "all": "TCP и UDP", "tcp": "Только TCP", "udp": "Только UDP"}
+IPSET_LABELS = {"loaded": "Загруженный список", "none": "Выключен", "any": "Любые IP"}
+CHECK_PREFIX = {"ok": "[ОК]", "warn": "[!]", "error": "[X]", "info": "[i]"}
+
+
+def font(size, weight="normal"):
+    return ctk.CTkFont(family=FONT, size=size, weight=weight)
+
+
+def primary_button():
+    return dict(fg_color=WHITE, hover_color="#e4e4e7", text_color=BLACK, font=font(13, "bold"), corner_radius=10)
+
+
+def secondary_button():
+    return dict(fg_color=CARD_HI, hover_color=TRACK, text_color=TEXT, border_width=1,
+                border_color=BORDER, font=font(13), corner_radius=10)
+
+
+def switch_style():
+    return dict(fg_color=TRACK, progress_color=SOFT, button_color=WHITE,
+                button_hover_color="#e4e4e7", text_color=TEXT, font=font(13))
+
+
+def menu_style():
+    return dict(fg_color=CARD_HI, button_color=TRACK, button_hover_color="#52525b", text_color=TEXT,
+                dropdown_fg_color=CARD, dropdown_hover_color=CARD_HI, dropdown_text_color=TEXT,
+                font=font(13), dropdown_font=font(13))
+
+
+def entry_style():
+    return dict(fg_color=CARD_HI, border_color=BORDER, text_color=TEXT, font=font(13), corner_radius=10)
 
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
-        self.title(f"zapret-app {__version__}")
-        self.geometry("580x760")
-        self.minsize(580, 760)
-        self.after(300, self._apply_icon)  # CustomTkinter сбрасывает иконку при старте — ставим с задержкой
+        ctk.set_default_color_theme("dark-blue")
+        self.configure(fg_color=BG)
+        self.title("zapret-app")
+        self.geometry(f"{WIDTH}x{HEIGHT}")
+        self.resizable(False, False)
+        self.after(300, self._apply_icon)
 
-        paths.ensure_data_dirs()
+        try:
+            paths.ensure_data_dirs()
+        except OSError as exc:
+            print(f"Не удалось создать папки данных: {exc}")
         self.cfg = settings.load()
         self.cfg["autostart"] = system.autostart_enabled()
         self.strategy_list = strategies.load_all()
 
         self._running = False
+        self._service = False
         self._busy = False
+        self._test_running = False
         self._busy_update = False
-        self._queue: queue.Queue = queue.Queue()
-        self.vars: dict[str, tk.BooleanVar] = {}
+        self._busy_app = False
+        self._cancel = threading.Event()
+        self._queue = queue.Queue()
+        self._pending_update = None
+        self.vars = {}
+        self.switch_titles = {}
         self.tray = None
 
         self._build()
@@ -57,18 +99,25 @@ class App(ctk.CTk):
 
         self.log("Приложение запущено")
         if not system.is_admin():
-            self.log("Нет прав администратора. Обход не запустится: закройте приложение и запустите его от имени администратора.")
+            self.log("Нет прав администратора: обход не запустится. Запустите программу от имени администратора.")
 
+        self._set_visual("off")
         self._refresh_status()
         if self.cfg["auto_update"]:
-            self.after(1000, lambda: self.check_updates(silent=True))
+            self.after(1000, lambda: self._check_lists(silent=True))
+        if self.cfg["auto_update_app"]:
+            self.after(2000, lambda: self._check_app(manual=False))
+        if self.cfg.get("resume_bypass"):
+            self.cfg["resume_bypass"] = False
+            settings.save(self.cfg)
+            self.after(2500, lambda: self._start_if_idle("Возобновляю обход после обновления…"))
         if "--autostart" in sys.argv:
-            self.after(2000, self._autostart_engine)
+            self.after(2000, lambda: self._start_if_idle("Запуск вместе с Windows: включаю обход…"))
             if self.tray:
-                self.withdraw()  # при автозапуске стартуем свёрнутыми в трей
+                self.withdraw()
         self.after(5000, self._poll)
 
-    # ---------- окно, трей, иконка ----------
+    # ---------- окно и трей ----------
 
     def _apply_icon(self):
         if paths.ICON_ICO.exists():
@@ -92,8 +141,7 @@ class App(ctk.CTk):
             self.log(f"Значок в трее недоступен: {exc}")
 
     def _from_tray(self, fn):
-        """Вызов из потока трея: передаём действие в главный поток через очередь."""
-        self._queue.put((lambda *_: fn(), None, None))
+        self._post(fn)
 
     def _show(self):
         self.deiconify()
@@ -114,86 +162,214 @@ class App(ctk.CTk):
     # ---------- построение интерфейса ----------
 
     def _build(self):
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=24, pady=(20, 6))
-        if paths.ICON_PNG.exists():
-            logo = Image.open(paths.ICON_PNG).resize((112, 112), Image.Resampling.LANCZOS)
-            img = ctk.CTkImage(light_image=logo, dark_image=logo, size=(56, 56))
-            ctk.CTkLabel(header, image=img, text="").pack(side="left", padx=(0, 14))
-        titles = ctk.CTkFrame(header, fg_color="transparent")
-        titles.pack(side="left")
-        ctk.CTkLabel(titles, text="zapret-app", font=ctk.CTkFont(size=28, weight="bold")).pack(anchor="w")
-        ctk.CTkLabel(titles, text="Обход блокировок Discord и YouTube", text_color=MUTED,
-                     font=ctk.CTkFont(size=13)).pack(anchor="w")
+        self.tabs = ctk.CTkSegmentedButton(
+            self, values=["Главная", "Настройки", "Сервис", "Журнал"], command=self._show_tab, height=36,
+            corner_radius=10, font=font(13), fg_color=CARD, selected_color=TRACK,
+            selected_hover_color="#52525b", unselected_color=CARD, unselected_hover_color=CARD_HI,
+            text_color=TEXT)
+        self.tabs.pack(fill="x", padx=20, pady=(18, 10))
 
-        card = self._card()
-        row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(fill="x", padx=20, pady=18)
-        left = ctk.CTkFrame(row, fg_color="transparent")
-        left.pack(side="left", fill="x", expand=True)
-        self.status_label = ctk.CTkLabel(left, text="Проверка…", font=ctk.CTkFont(size=20, weight="bold"), anchor="w")
-        self.status_label.pack(anchor="w")
-        self.status_hint = ctk.CTkLabel(left, text="", text_color=MUTED, font=ctk.CTkFont(size=12),
-                                        anchor="w", justify="left", wraplength=340)
-        self.status_hint.pack(anchor="w")
-        self.toggle_btn = ctk.CTkButton(row, text="Включить", width=150, height=46, corner_radius=12,
-                                        font=ctk.CTkFont(size=15, weight="bold"),
-                                        fg_color=ACCENT, hover_color="#4f46e5", command=self.toggle)
-        self.toggle_btn.pack(side="right")
-        self.toggle_btn.configure(state="disabled")
+        self.container = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
+        self.container.pack(fill="both", expand=True, padx=20, pady=(0, 18))
+        self.frames = {
+            "Главная": self._build_main(),
+            "Настройки": self._build_settings(),
+            "Сервис": self._build_service(),
+            "Журнал": self._build_log(),
+        }
+        self.tabs.set("Главная")
+        self._show_tab("Главная")
 
-        card = self._card()
-        self._section_title(card, "Стратегия обхода")
-        names = [s["name"] for s in self.strategy_list]
-        self.strategy_menu = ctk.CTkOptionMenu(card, values=names, command=self.on_strategy_change, height=36)
-        self.strategy_menu.pack(fill="x", padx=20, pady=(0, 16))
-        self.strategy_menu.set(self._name_by_id(self.cfg["strategy"]))
+    def _show_tab(self, name):
+        for frame in self.frames.values():
+            frame.pack_forget()
+        self.frames[name].pack(fill="both", expand=True)
 
-        card = self._card()
-        self._section_title(card, "Настройки")
-        self._switch(card, "game_filter", "Игровой фильтр (ускорение игровых серверов)")
-        self._switch(card, "auto_update", "Автообновление списков из официального репозитория")
-        self._switch(card, "autostart", "Запускать вместе с Windows")
-        self._switch(card, "close_to_tray", "Сворачивать в трей при закрытии окна")
-        ctk.CTkFrame(card, height=6, fg_color="transparent").pack()
+    def _scroll(self):
+        return ctk.CTkScrollableFrame(self.container, fg_color=BG, corner_radius=0,
+                                      scrollbar_button_color=TRACK,
+                                      scrollbar_button_hover_color="#52525b")
 
-        card = self._card()
-        self._section_title(card, "Обновления")
-        row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(fill="x", padx=20, pady=(0, 16))
-        self.update_info = ctk.CTkLabel(row, text=self._update_text(), text_color=MUTED,
-                                        font=ctk.CTkFont(size=12), anchor="w", justify="left")
-        self.update_info.pack(side="left", fill="x", expand=True)
-        self.update_btn = ctk.CTkButton(row, text="Проверить", width=120,
-                                        command=lambda: self.check_updates(silent=False))
-        self.update_btn.pack(side="right")
-
-        card = self._card(expand=True)
-        self._section_title(card, "Журнал")
-        self.log_box = ctk.CTkTextbox(card, height=150, font=ctk.CTkFont(family="Consolas", size=12),
-                                      state="disabled")
-        self.log_box.pack(fill="both", expand=True, padx=16, pady=(0, 16))
-
-        ctk.CTkLabel(self, text="Основано на flowseal/zapret-discord-youtube · лицензия MIT",
-                     text_color=MUTED, font=ctk.CTkFont(size=11)).pack(pady=(4, 10))
-
-    def _card(self, expand=False):
-        frame = ctk.CTkFrame(self, corner_radius=16, fg_color=CARD)
-        frame.pack(fill="both" if expand else "x", expand=expand, padx=24, pady=6)
+    def _card(self, parent, **pack):
+        frame = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=14, border_width=1, border_color=BORDER)
+        frame.pack(fill="x", **pack)
         return frame
 
-    def _section_title(self, parent, text):
-        ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=14, weight="bold")).pack(
-            anchor="w", padx=20, pady=(16, 6))
+    def _section(self, parent, text):
+        ctk.CTkLabel(parent, text=text, font=font(11, "bold"), text_color=MUTED).pack(
+            anchor="w", padx=16, pady=(14, 4))
 
-    def _switch(self, parent, key, text):
+    def _label(self, parent, text, **pack):
+        ctk.CTkLabel(parent, text=text, font=font(11), text_color=MUTED, anchor="w",
+                     justify="left", wraplength=360).pack(anchor="w", padx=16, **pack)
+
+    def _build_main(self):
+        f = ctk.CTkFrame(self.container, fg_color=BG, corner_radius=0)
+        self.status_label = ctk.CTkLabel(f, text="", font=font(22, "bold"), text_color=TEXT)
+        self.status_label.pack(pady=(8, 0))
+        self.hint_label = ctk.CTkLabel(f, text="", font=font(12), text_color=MUTED)
+        self.hint_label.pack(pady=(2, 0))
+        self.circle = PowerCircle(f, self.toggle)
+        self.circle.pack(pady=(14, 14))
+
+        card = self._card(f, pady=(0, 10))
+        ctk.CTkLabel(card, text="СТРАТЕГИЯ", font=font(11, "bold"), text_color=MUTED).pack(
+            anchor="w", padx=16, pady=(12, 6))
+        self.strategy_menu = ctk.CTkOptionMenu(
+            card, values=[s["name"] for s in self.strategy_list], command=self.on_strategy_change,
+            height=38, corner_radius=10, **menu_style())
+        self.strategy_menu.pack(fill="x", padx=16, pady=(0, 14))
+        self.strategy_menu.set(self._name_by_id(self.cfg["strategy"]))
+
+        self.test_btn = ctk.CTkButton(f, text="Проверить стратегию", height=40,
+                                      command=self.test_current, **secondary_button())
+        self.test_btn.pack(fill="x", pady=(0, 8))
+        self.best_btn = ctk.CTkButton(f, text="Подобрать лучшую", height=40,
+                                      command=self.test_all, **secondary_button())
+        self.best_btn.pack(fill="x")
+
+        self.banner = ctk.CTkFrame(f, fg_color=CARD, corner_radius=12, border_width=1, border_color=BORDER)
+        self.banner_label = ctk.CTkLabel(self.banner, text="", font=font(12), text_color=TEXT,
+                                         justify="left", anchor="w")
+        self.banner_label.pack(side="left", padx=14, pady=10, fill="x", expand=True)
+        ctk.CTkButton(self.banner, text="Установить", width=110, height=30,
+                      command=self._install_pending, **primary_button()).pack(side="right", padx=10)
+        return f
+
+    def _build_settings(self):
+        f = self._scroll()
+
+        card = self._card(f, pady=(0, 10))
+        self._section(card, "ИГРОВОЙ ФИЛЬТР")
+        self._label(card, "Ускоряет игровые серверы и голосовой чат. Порты можно изменить.")
+        self.game_menu = ctk.CTkOptionMenu(card, values=list(GAME_LABELS.values()),
+                                           command=self.on_game_mode, height=36, corner_radius=10,
+                                           **menu_style())
+        self.game_menu.pack(fill="x", padx=16, pady=(8, 8))
+        self.game_menu.set(GAME_LABELS[self.cfg["game_mode"]])
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=(0, 14))
+        self.tcp_entry = self._range_entry(row, "game_tcp", "TCP порты", "left")
+        self.udp_entry = self._range_entry(row, "game_udp", "UDP порты", "right")
+
+        card = self._card(f, pady=(0, 10))
+        self._section(card, "IPSET ФИЛЬТР")
+        self._label(card, "Список IP-адресов для обхода. «Загруженный список» — полный список из репозитория.")
+        self.ipset_menu = ctk.CTkOptionMenu(card, values=list(IPSET_LABELS.values()),
+                                            command=self.on_ipset_mode, height=36, corner_radius=10,
+                                            **menu_style())
+        self.ipset_menu.pack(fill="x", padx=16, pady=(8, 14))
+        self.ipset_menu.set(IPSET_LABELS.get(updater.ipset_mode(), IPSET_LABELS["loaded"]))
+
+        card = self._card(f, pady=(0, 10))
+        self._section(card, "ПРОГРАММА")
+        self._switch(card, "close_to_tray", "Сворачивать в трей", "Окно скрывается, обход продолжает работать")
+        self._switch(card, "autostart", "Запускать с Windows", "Стартует в трее и сразу включает обход")
+        ctk.CTkFrame(card, height=6, fg_color="transparent").pack()
+
+        card = self._card(f, pady=(0, 10))
+        self._section(card, "ОБНОВЛЕНИЯ")
+        self._switch(card, "auto_update", "Обновлять списки", "Домены и IP из официального репозитория")
+        self._switch(card, "auto_update_app", "Обновлять программу", "Скачивает и устанавливает новую версию")
+        self.info_label = ctk.CTkLabel(card, text=self._info_text(), font=font(12), text_color=MUTED,
+                                       justify="left", anchor="w")
+        self.info_label.pack(anchor="w", padx=16, pady=(8, 8))
+        self.check_btn = ctk.CTkButton(card, text="Проверить обновления", height=36,
+                                       command=self.check_updates_manual, **secondary_button())
+        self.check_btn.pack(fill="x", padx=16, pady=(0, 14))
+
+        card = self._card(f, pady=(0, 10))
+        self._section(card, "КОНФИГИ")
+        self._label(card, "Папка со списками доменов и IP (ipset, list-general и др.). "
+                          "Свои домены добавляйте в файлы *-user.txt.")
+        ctk.CTkButton(card, text="Открыть папку списков", height=36,
+                      command=lambda: self._open_folder(paths.LISTS_DIR),
+                      **secondary_button()).pack(fill="x", padx=16, pady=(8, 6))
+        ctk.CTkButton(card, text="Открыть папку данных", height=36,
+                      command=lambda: self._open_folder(paths.DATA_DIR),
+                      **secondary_button()).pack(fill="x", padx=16, pady=(0, 14))
+        return f
+
+    def _range_entry(self, parent, key, caption, side):
+        box = ctk.CTkFrame(parent, fg_color="transparent")
+        box.pack(side=side, fill="x", expand=True, padx=(0 if side == "left" else 8, 0))
+        ctk.CTkLabel(box, text=caption, font=font(11), text_color=MUTED).pack(anchor="w")
+        entry = ctk.CTkEntry(box, height=34, **entry_style())
+        entry.insert(0, self.cfg[key])
+        entry.pack(fill="x")
+        entry.bind("<Return>", lambda _e: self.on_range_commit(key, entry))
+        entry.bind("<FocusOut>", lambda _e: self.on_range_commit(key, entry))
+        return entry
+
+    def _build_service(self):
+        f = self._scroll()
+
+        card = self._card(f, pady=(0, 10))
+        self._section(card, "СЛУЖБА WINDOWS")
+        self._label(card, "Служба запускает обход при загрузке системы, даже до входа в учётную запись. "
+                          "Пока она установлена, круг на главной управляет ею.")
+        ctk.CTkButton(card, text="Установить службу", height=38, command=self.install_service_ui,
+                      **primary_button()).pack(fill="x", padx=16, pady=(10, 6))
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=(0, 14))
+        ctk.CTkButton(row, text="Удалить службы", height=36, command=self.remove_service_ui,
+                      **secondary_button()).pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ctk.CTkButton(row, text="Статус", height=36, command=self.status_ui,
+                      **secondary_button()).pack(side="right", fill="x", expand=True, padx=(4, 0))
+
+        card = self._card(f, pady=(0, 10))
+        self._section(card, "ИНСТРУМЕНТЫ")
+        ctk.CTkButton(card, text="Диагностика системы", height=36, command=self.diagnostics_ui,
+                      **secondary_button()).pack(fill="x", padx=16, pady=(4, 6))
+        ctk.CTkButton(card, text="Обновить список IPSet", height=36, command=self.update_ipset_ui,
+                      **secondary_button()).pack(fill="x", padx=16, pady=(0, 6))
+        ctk.CTkButton(card, text="Обновить hosts (Discord, YouTube)", height=36,
+                      command=self.update_hosts_ui, **secondary_button()).pack(fill="x", padx=16, pady=(0, 14))
+
+        card = self._card(f, pady=(0, 10))
+        self._section(card, "ФЕЙКОВЫЕ ПАКЕТЫ")
+        self._label(card, "Какой файл из папки bin подменяет трафик. Меняйте, если стратегия не работает.")
+        options = fakes.list_fakes() or ["нет файлов"]
+        ctk.CTkLabel(card, text="Для Discord", font=font(11), text_color=MUTED, anchor="w").pack(
+            anchor="w", padx=16, pady=(8, 0))
+        self.fake_discord = ctk.CTkOptionMenu(card, values=options, height=34, corner_radius=10, **menu_style())
+        self.fake_discord.pack(fill="x", padx=16, pady=(4, 8))
+        ctk.CTkLabel(card, text="Для игр", font=font(11), text_color=MUTED, anchor="w").pack(
+            anchor="w", padx=16)
+        self.fake_game = ctk.CTkOptionMenu(card, values=options, height=34, corner_radius=10, **menu_style())
+        self.fake_game.pack(fill="x", padx=16, pady=(4, 8))
+        for kind, menu in (("discord", self.fake_discord), ("game", self.fake_game)):
+            current = fakes.current(kind)
+            if current and current in options:
+                menu.set(current)
+        ctk.CTkButton(card, text="Применить фейки", height=36, command=self.apply_fakes,
+                      **secondary_button()).pack(fill="x", padx=16, pady=(4, 14))
+        return f
+
+    def _switch(self, parent, key, title, desc):
+        self.switch_titles[key] = title
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=(6, 6))
         var = tk.BooleanVar(value=bool(self.cfg[key]))
         self.vars[key] = var
-        ctk.CTkSwitch(parent, text=text, variable=var,
-                      command=lambda: self.on_switch(key)).pack(anchor="w", padx=20, pady=6)
+        ctk.CTkSwitch(row, text=title, variable=var, command=lambda: self.on_switch(key),
+                      **switch_style()).pack(anchor="w")
+        ctk.CTkLabel(row, text=desc, font=font(11), text_color=MUTED, anchor="w",
+                     justify="left").pack(anchor="w", padx=(50, 0))
 
-    def _update_text(self):
-        return (f"Версия списков: {self.cfg['lists_version'] or '—'}\n"
+    def _build_log(self):
+        f = ctk.CTkFrame(self.container, fg_color=BG, corner_radius=0)
+        self.log_box = ctk.CTkTextbox(f, font=ctk.CTkFont(family="Consolas", size=12), fg_color=CARD,
+                                      text_color=SOFT, border_width=1, border_color=BORDER,
+                                      corner_radius=14, state="disabled")
+        self.log_box.pack(fill="both", expand=True, pady=(0, 10))
+        ctk.CTkButton(f, text="Очистить журнал", height=36, command=self.clear_log,
+                      **secondary_button()).pack(fill="x")
+        return f
+
+    def _info_text(self):
+        return (f"Версия программы: {__version__}\n"
+                f"Версия списков: {self.cfg['lists_version'] or '—'}\n"
                 f"Последняя проверка: {self.cfg['last_check'] or '—'}")
 
     # ---------- служебные функции ----------
@@ -217,15 +393,30 @@ class App(ctk.CTk):
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
         try:
+            paths.DATA_DIR.mkdir(parents=True, exist_ok=True)
             with open(paths.APP_LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(line)
         except OSError:
             pass
 
+    def clear_log(self):
+        self.log_box.configure(state="normal")
+        self.log_box.delete("1.0", "end")
+        self.log_box.configure(state="disabled")
+
+    def _open_folder(self, path):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(path))
+        except (AttributeError, OSError) as exc:
+            self.log(f"Не удалось открыть папку {path}: {exc}")
+
+    def _post(self, fn):
+        """Ставит действие в очередь главного потока (безопасно из фоновых потоков)."""
+        self._queue.put((lambda *_: fn(), None, None))
+
     def _bg(self, fn, done):
         """Выполняет fn в фоне; done(result, error) вызывается в главном потоке."""
-        import threading
-
         def worker():
             try:
                 result, error = fn(), None
@@ -233,6 +424,24 @@ class App(ctk.CTk):
                 result, error = None, exc
             self._queue.put((done, result, error))
         threading.Thread(target=worker, daemon=True).start()
+
+    def _job(self, note, fn, on_done=None):
+        """Действие в фоне с блокировкой остальных действий. on_done(result) — в главном потоке."""
+        if self._busy:
+            self.log("Подождите: предыдущее действие ещё выполняется")
+            return
+        self._busy = True
+        self.log(note)
+
+        def done(result, error):
+            self._busy = False
+            if error:
+                self.log(f"Ошибка: {error}")
+            elif on_done:
+                on_done(result)
+            self._refresh_status()
+
+        self._bg(fn, done)
 
     def _pump(self):
         while True:
@@ -248,47 +457,43 @@ class App(ctk.CTk):
             self._refresh_status()
         self.after(5000, self._poll)
 
-    # ---------- статус и управление обходом ----------
+    # ---------- состояние круга и статуса ----------
+
+    def _set_visual(self, state: str):
+        self.circle.set_state(state)
+        self.status_label.configure(text=STATE_TEXT[state])
+        self.hint_label.configure(text=STATE_HINT[state])
 
     def _refresh_status(self):
-        self._bg(engine.is_running, lambda running, err: self._set_running(bool(running)))
+        self._bg(lambda: {"running": engine.is_running(), "service": engine.service_installed()},
+                 self._on_probe)
+
+    def _on_probe(self, data, error):
+        if error or data is None:
+            return
+        self._service = data["service"]
+        self._set_running(data["running"])
 
     def _set_running(self, running: bool):
         self._running = running
-        self.toggle_btn.configure(state="disabled" if self._busy else "normal")
-        if running:
-            self.status_label.configure(text="● Работает", text_color=GREEN)
-            self.status_hint.configure(text="Обход активен. Он продолжит работать после закрытия окна, пока вы его не выключите.")
-            self.toggle_btn.configure(text="Выключить", fg_color=RED, hover_color="#dc2626")
-        else:
-            self.status_label.configure(text="● Выключено", text_color=MUTED)
-            self.status_hint.configure(text="Нажмите «Включить», чтобы начать обход.")
-            self.toggle_btn.configure(text="Включить", fg_color=ACCENT, hover_color="#4f46e5")
+        if not self._busy:
+            self._set_visual("on" if running else "off")
+
+    def _game_args(self):
+        return (self.cfg["game_mode"], self.cfg["game_tcp"], self.cfg["game_udp"])
 
     def _start_engine(self):
-        return engine.start(self.cfg["strategy"], self.cfg["game_filter"])
+        return engine.start(self.cfg["strategy"], *self._game_args())
+
+    def _start_if_idle(self, note):
+        if not self._busy and not self._running:
+            self._start_action(note)
 
     def _start_action(self, note: str):
         self._busy = True
-        self.toggle_btn.configure(state="disabled")
         self.log(note)
+        self._set_visual("starting")
         self._bg(self._start_engine, self._after_start)
-
-    def toggle(self):
-        if self._busy:
-            return
-        if self._running:
-            self._busy = True
-            self.toggle_btn.configure(state="disabled")
-            self.log("Выключаю обход…")
-            self._bg(engine.stop, lambda _r, err: self._finish_action("Обход выключен", err))
-        else:
-            self._start_action("Запускаю обход…")
-
-    def _finish_action(self, message, error):
-        self._busy = False
-        self.log(f"Ошибка: {error}" if error else message)
-        self._refresh_status()
 
     def _after_start(self, running, error):
         self._busy = False
@@ -297,21 +502,80 @@ class App(ctk.CTk):
         elif running:
             self.log("Обход включён")
         else:
-            self.log("winws не запустился. Проверьте права администратора и файл winws.log в папке zapret-app.")
+            self.log("Обход не запустился: проверьте права администратора и файл winws.log")
+        self._running = bool(running) and error is None
+        self._set_visual("on" if self._running else "off")
         self._refresh_status()
 
-    def _autostart_engine(self):
-        if not self._running and not self._busy:
-            self.toggle()
+    def toggle(self):
+        if self._busy:
+            return
+        if self._running:
+            self._busy = True
+            self.log("Выключаю обход…")
+            self._set_visual("stopping")
+            self._bg(engine.stop, lambda _r, err: self._finish_stop(err))
+        else:
+            self._start_action("Запускаю обход…")
 
-    # ---------- реакции на настройки ----------
+    def _finish_stop(self, error):
+        self._busy = False
+        self.log(f"Ошибка остановки: {error}" if error else "Обход выключен")
+        self._running = False
+        self._set_visual("off")
+        self._refresh_status()
+
+    def _settings_changed(self, note):
+        """После смены настроек обхода: перезапуск, если работает; иначе обновить службу."""
+        if self._busy:
+            return
+        if self._running:
+            self._start_action(note)
+        elif self._service:
+            self._job("Обновляю параметры службы…",
+                      lambda: engine.sync_service(self.cfg["strategy"], *self._game_args()))
+
+    # ---------- настройки обхода ----------
 
     def on_strategy_change(self, name):
         self.cfg["strategy"] = self._id_by_name(name)
         settings.save(self.cfg)
         self.log(f"Выбрана стратегия: {name}")
-        if self._running and not self._busy:
-            self._start_action("Перезапускаю обход с новой стратегией…")
+        self._settings_changed("Перезапускаю обход с новой стратегией…")
+
+    def on_game_mode(self, label):
+        mode = next(k for k, v in GAME_LABELS.items() if v == label)
+        if mode == self.cfg["game_mode"]:
+            return
+        self.cfg["game_mode"] = mode
+        settings.save(self.cfg)
+        self.log(f"Игровой фильтр: {label}")
+        self._settings_changed("Перезапускаю обход с учётом игрового фильтра…")
+
+    def on_range_commit(self, key, entry):
+        text = entry.get().strip()
+        if text == self.cfg[key]:
+            return
+        if not strategies.valid_range(text):
+            self.log(f"Неверный диапазон портов «{text}». Нужен вид 1024-65535")
+            entry.delete(0, "end")
+            entry.insert(0, self.cfg[key])
+            return
+        self.cfg[key] = text
+        settings.save(self.cfg)
+        self.log(f"Порты обновлены: {text}")
+        self._settings_changed("Перезапускаю обход с новыми портами…")
+
+    def on_ipset_mode(self, label):
+        mode = next(k for k, v in IPSET_LABELS.items() if v == label)
+        if mode == updater.ipset_mode():
+            return
+
+        def after(_result):
+            self.log(f"IPSet: {label}")
+            self._settings_changed("Перезапускаю обход с новым режимом IPSet…")
+
+        self._job("Меняю режим IPSet…", lambda: updater.set_ipset_mode(mode), on_done=after)
 
     def on_switch(self, key):
         value = bool(self.vars[key].get())
@@ -324,34 +588,225 @@ class App(ctk.CTk):
                 return
         self.cfg[key] = value
         settings.save(self.cfg)
-        self.log(f"{SWITCH_LABELS[key]}: {'вкл' if value else 'выкл'}")
-        if key == "game_filter" and self._running and not self._busy:
-            self._start_action("Перезапускаю обход с учётом игрового фильтра…")
+        self.log(f"{self.switch_titles[key]}: {'вкл' if value else 'выкл'}")
 
-    # ---------- обновления списков ----------
+    # ---------- сервис и инструменты ----------
 
-    def check_updates(self, silent=False):
+    def install_service_ui(self):
+        def done(running):
+            self.log("Служба установлена и запущена. Обход стартует сам при загрузке Windows."
+                     if running else "Служба установлена, но не запустилась. Смотрите winws.log")
+            self._service = True
+
+        self._job("Устанавливаю службу Windows…",
+                  lambda: engine.install_service(self.cfg["strategy"], *self._game_args()), on_done=done)
+
+    def remove_service_ui(self):
+        def done(_result):
+            self.log("Службы zapret и WinDivert удалены")
+            self._service = False
+
+        self._job("Удаляю службы…", engine.remove_service, on_done=done)
+
+    def status_ui(self):
+        self._job("Проверяю состояние…", diagnostics.service_report,
+                  on_done=lambda lines: [self.log(line) for line in lines])
+
+    def diagnostics_ui(self):
+        self._job("Запускаю диагностику системы…", diagnostics.run_checks, on_done=self._show_checks)
+
+    def _show_checks(self, checks):
+        for check in checks:
+            self.log(f"{CHECK_PREFIX.get(check.level, '')} {check.text}")
+        self.log("Диагностика завершена")
+
+    def update_ipset_ui(self):
+        def done(changed):
+            self.log("Список IPSet обновлён" if changed else "Список IPSet уже актуален")
+            if changed and self._running:
+                self._start_action("Перезапускаю обход с новым списком IPSet…")
+
+        self._job("Обновляю список IPSet…", updater.update_ipset, on_done=done)
+
+    def update_hosts_ui(self):
+        def done(added):
+            self.log(f"hosts обновлён: добавлено записей {added}" if added else "hosts уже актуален")
+
+        self._job("Обновляю файл hosts…", hosts.update_hosts, on_done=done)
+
+    def apply_fakes(self):
+        discord_name = self.fake_discord.get()
+        game_name = self.fake_game.get()
+        if "нет файлов" in (discord_name, game_name):
+            self.log("В папке bin нет файлов фейков")
+            return
+
+        def job():
+            was_running = engine.is_running()
+            if was_running:
+                engine.stop()
+            fakes.apply("discord", discord_name)
+            fakes.apply("game", game_name)
+            if was_running:
+                engine.start(self.cfg["strategy"], *self._game_args())
+            return was_running
+
+        self._job("Применяю фейковые пакеты…", job,
+                  on_done=lambda was: self.log("Фейки применены" + (", обход перезапущен" if was else "")))
+
+    # ---------- проверка стратегий ----------
+
+    def _set_test_buttons(self):
+        if self._test_running:
+            self.test_btn.configure(text="Остановить проверку", state="normal")
+            self.best_btn.configure(state="disabled")
+        else:
+            self.test_btn.configure(text="Проверить стратегию", state="normal")
+            self.best_btn.configure(state="normal")
+
+    def test_current(self):
+        self._run_test(all_mode=False)
+
+    def test_all(self):
+        self._run_test(all_mode=True)
+
+    def _run_test(self, all_mode: bool):
+        if self._test_running:
+            self._cancel.set()
+            self.hint_label.configure(text="Останавливаю проверку…")
+            return
+        if self._busy:
+            return
+        self._test_running = True
+        self._busy = True
+        self._cancel.clear()
+        self._set_test_buttons()
+        was_running = self._running
+        selected = self.cfg["strategy"]
+        ids = [s["id"] for s in self.strategy_list] if all_mode else [selected]
+        if all_mode:
+            self.log("Проверяю все стратегии. Это займёт несколько минут.")
+        else:
+            self.log(f"Проверяю стратегию «{self._name_by_id(selected)}»")
+        self.circle.set_state("starting")
+        self.status_label.configure(text="Проверка")
+        game = self._game_args()
+
+        def progress(msg):
+            self._post(lambda: self._on_test_progress(msg))
+
+        def job():
+            return tester.run(ids, game, was_running, selected, all_mode, progress, self._cancel)
+
+        self._bg(job, lambda report, err: self._after_test(report, err, all_mode))
+
+    def _on_test_progress(self, msg):
+        self.hint_label.configure(text=msg)
+        self.log(msg)
+
+    def _after_test(self, report, error, all_mode):
+        self._test_running = False
+        self._busy = False
+        self._set_test_buttons()
+        if error:
+            self.log(f"Ошибка проверки: {error}")
+        elif report is not None:
+            for r in report.results:
+                self.log(f"{r.name}: доступно {r.score} из {r.total}")
+            if report.cancelled:
+                self.log("Проверка остановлена")
+            elif all_mode and report.best:
+                self.cfg["strategy"] = report.best.id
+                settings.save(self.cfg)
+                self.strategy_menu.set(report.best.name)
+                self.log(f"Лучшая стратегия: «{report.best.name}» ({report.best.score} из "
+                         f"{report.best.total}). Выбрана автоматически.")
+        self._refresh_status()
+
+    # ---------- обновления списков и программы ----------
+
+    def check_updates_manual(self):
+        self._check_lists(silent=False)
+        self._check_app(manual=True)
+
+    def _check_lists(self, silent=False):
         if self._busy_update:
             return
         self._busy_update = True
-        self.update_btn.configure(state="disabled")
+        self.check_btn.configure(state="disabled")
         if not silent:
             self.log("Проверяю обновления списков…")
-        self._bg(updater.update_lists, lambda res, err: self._after_update(res, err, silent))
+        self._bg(updater.update_lists, lambda res, err: self._after_lists(res, err, silent))
 
-    def _after_update(self, result, error, silent):
+    def _after_lists(self, result, error, silent):
         self._busy_update = False
-        self.update_btn.configure(state="normal")
+        self.check_btn.configure(state="normal")
         if error:
             self.log(f"Не удалось обновить списки: {error}")
             return
         self.cfg["lists_version"] = result.version
         self.cfg["last_check"] = dt.datetime.now().strftime("%d.%m.%Y %H:%M")
         settings.save(self.cfg)
-        self.update_info.configure(text=self._update_text())
+        self.info_label.configure(text=self._info_text())
         if result.changed:
             self.log(f"Обновлено файлов: {len(result.changed)}, версия списков {result.version}")
             if self._running and not self._busy:
                 self._start_action("Перезапускаю обход с новыми списками…")
         elif not silent:
             self.log("Списки уже актуальны")
+
+    def _check_app(self, manual: bool):
+        if self._busy_app:
+            return
+        self._busy_app = True
+        if manual:
+            self.log("Проверяю новую версию программы…")
+        self._bg(app_updater.fetch_latest, lambda info, err: self._after_app_check(info, err, manual))
+
+    def _after_app_check(self, info, error, manual):
+        self._busy_app = False
+        if error:
+            self.log(f"Не удалось проверить версию программы: {error}")
+            return
+        if info is None or not app_updater.is_newer(info.version):
+            if manual:
+                self.log(f"Программа актуальна ({__version__})")
+            return
+        self._pending_update = info
+        if self.cfg["auto_update_app"]:
+            self.log(f"Найдена версия {info.version}, устанавливаю автоматически")
+            self._install_update(info)
+        else:
+            self.banner_label.configure(text=f"Доступна версия {info.version}")
+            self.banner.pack(fill="x", pady=(10, 0))
+
+    def _install_pending(self):
+        if self._pending_update:
+            self._install_update(self._pending_update)
+
+    def _install_update(self, info):
+        if self._busy:
+            self.log("Сейчас выполняется другое действие, обновление отложено")
+            return
+        self.banner.pack_forget()
+        self._busy = True
+        self.cfg["resume_bypass"] = self._running
+        settings.save(self.cfg)
+        self.log(f"Скачиваю zapret-app {info.version}…")
+        self._bg(lambda: app_updater.download(info), self._on_downloaded)
+
+    def _on_downloaded(self, path, error):
+        if error:
+            self._busy = False
+            self.cfg["resume_bypass"] = False
+            settings.save(self.cfg)
+            self.log(f"Не удалось скачать обновление: {error}")
+            return
+        try:
+            app_updater.launch_installer(path)
+        except Exception as exc:  # noqa: BLE001
+            self._busy = False
+            self.log(f"Не удалось запустить установщик: {exc}")
+            return
+        self.log("Устанавливаю обновление. Программа закроется и откроется новая версия.")
+        self.after(800, self._quit)

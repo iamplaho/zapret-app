@@ -1,0 +1,101 @@
+# targets.txt - endpoint list for zapret.ps1 tests
+#
+# Format:
+#   KeyName = "https://host..."   -> Runs HTTP/TLS checks + ping
+#   KeyName = "PING:1.2.3.4"       -> Ping only
+#
+# Keys must be a single word (letters/digits/underscore), because the
+# script parses them as simple identifiers. You can add or remove lines.
+
+### Discord
+DiscordMain = "https://discord.com"
+DiscordGateway = "https://gateway.discord.gg"
+DiscordCDN = "https://cdn.discordapp.com"
+DiscordUpdates = "https://updates.discord.com"
+DiscordGG = "https://discord.gg"
+DiscordMedia = "https://discord.media"
+
+### YouTube
+YouTubeWeb = "https://www.youtube.com"
+YouTubeShort = "https://youtu.be"
+YouTubeImage = "https://i.ytimg.com"
+YouTubeVideoRedirect = "https://redirector.googlevideo.com"
+Yt3Ggpht = "https://yt3.ggpht.com"
+Yt4Ggpht = "https://yt4.ggpht.com"
+Yt3GoogleUserContent = "https://yt3.googleusercontent.com"
+GoogleVideo = "https://googlevideo.com"
+JnnPaGoogleApis = "https://jnn-pa.googleapis.com"
+DiscordCDN = "https://stable.dl2.discordapp.net"
+WideYouTubeLGoogle = "https://wide-youtube.l.google.com"
+YouTubeNoCookie = "https://youtube-nocookie.com"
+YouTubeUiLGoogle = "https://youtube-ui.l.google.com"
+YouTubeCom = "https://youtube.com"
+YouTubeEmbeddedPlayer = "https://youtubeembeddedplayer.googleapis.com"
+YouTubeKids = "https://youtubekids.com"
+YouTubeiGoogleApis = "https://youtubei.googleapis.com"
+YouTubeBe = "https://youtu.be"
+YtVideoUploadLGoogle = "https://yt-video-upload.l.google.com"
+YtimgCom = "https://ytimg.com"
+YtimgLGoogle = "https://ytimg.l.google.com"
+
+### Google
+GoogleMain = "https://www.google.com"
+GoogleGstatic = "https://www.gstatic.com"
+
+### Cloudflare
+CloudflareWeb = "https://www.cloudflare.com"
+CloudflareCDN = "https://cdnjs.cloudflare.com"
+CloudflareEch = "https://cloudflare-ech.com"
+EncryptedSNI = "https://encryptedsni.com"
+CloudflareAccess = "https://cloudflareaccess.com"
+CloudflareApps = "https://cloudflareapps.com"
+CloudflareBolt = "https://cloudflarebolt.com"
+CloudflareClient = "https://cloudflareclient.com"
+CloudflareInsights = "https://cloudflareinsights.com"
+CloudflareOk = "https://cloudflareok.com"
+CloudflarePartners = "https://cloudflarepartners.com"
+CloudflarePortal = "https://cloudflareportal.com"
+CloudflarePreview = "https://cloudflarepreview.com"
+CloudflareResolve = "https://cloudflareresolve.com"
+CloudflareSSL = "https://cloudflaressl.com"
+CloudflareStatus = "https://cloudflarestatus.com"
+CloudflareStorage = "https://cloudflarestorage.com"
+CloudflareStream = "https://cloudflarestream.com"
+CloudflareTest = "https://cloudflaretest.com"
+
+### Ubisoft Main
+UbisoftMain = "https://ubisoft.com"
+Uplay = "https://uplay.com"
+Ubi = "https://ubi.com"
+UbisoftOrbitS3 = "https://ubisoft-orbit.s3.amazonaws.com"
+PublicUbiServices = "https://public-ubiservices.ubi.com"
+ApiUplay = "https://api-uplay.ubi.com"
+ConnectUbi = "https://connect.ubisoft.com"
+Rainbow6 = "https://rainbow6.com"
+ExtUplay = "https://ext-uplay.ubi.com"
+R6Stats = "https://r6s-stats.ubisoft.com"
+StaticShare = "https://static2.share.ubisoft.com"
+
+### Ubisoft Ping Only
+PingUbisoft = "PING:52.222.149.31"
+PingUplayUbisoft = "PING:54.76.54.196"
+PingConnect = "PING:18.209.141.203"
+PingPublicServices = "PING:99.83.188.134"
+PingPublicWs = "PING:3.33.249.140"
+PingUbiCdn = "PING:2.23.89.244"
+PingStaticCdn = "PING:2.23.89.92"
+PingRainbow6 = "PING:54.155.2.87"
+PingR6 = "PING:172.67.139.108"
+
+### Public DNS (PING-only)
+CloudflareDNS1111 = "PING:1.1.1.1"
+CloudflareDNS1001 = "PING:1.0.0.1"
+GoogleDNS8888 = "PING:8.8.8.8"
+GoogleDNS8844 = "PING:8.8.4.4"
+Quad9DNS9999 = "PING:9.9.9.9"
+Quad9DNS149 = "PING:149.112.112.112"
+OpenDNS20867_222 = "PING:208.67.222.222"
+OpenDNS20867_220 = "PING:208.67.220.220"
+Level3DNS422 = "PING:4.2.2.2"
+Level3DNS421 = "PING:4.2.2.1"
+
