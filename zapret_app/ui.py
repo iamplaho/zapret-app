@@ -284,6 +284,9 @@ class App(ctk.CTk):
             return
         self._log_anim_job = self.after(14, lambda: self._anim_log(y0, h0, y1, h1, step + 1))
 
+    def _on_tab_click(self, name):
+        self._show_tab(name)
+
     def _show_tab(self, name, animate=True):
         if name == self._tab:
             return
