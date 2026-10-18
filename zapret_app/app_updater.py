@@ -25,7 +25,7 @@ MIN_INSTALLER_SIZE = 1_000_000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 TAG_RE = re.compile(r"/releases/tag/([^/?#]+)$")
-TAG_IN_FEED = re.compile(r"/releases/tag/(v\d+\.\d+\.\d+[^\"<>\s?#]*)")
+TAG_IN_FEED = re.compile(r"/releases/tag/(v\d+\.\d+\.\d+(?:[-+.][A-Za-z0-9.\-]+)?)(?![A-Za-z0-9.\-])")
 
 
 @dataclass
@@ -82,12 +82,19 @@ def parse_feed_tags(text: str) -> list:
         tag = match.group(1)
         if tag not in tags and parse_version(tag):
             tags.append(tag)
-    tags.sort(key=lambda t: parse_version(t), reverse=True)
+    # при одинаковом номере обычный релиз идёт раньше pre-release (0.4.3 раньше 0.4.3-beta.1)
+    tags.sort(key=lambda t: (parse_version(t), "-" not in t), reverse=True)
     return tags
 
 
+def _installer_url(tag: str):
+    version = tag.lstrip("v")
+    name = f"{ASSET_PREFIX}{version}.exe"
+    return version, name, f"{DOWNLOAD_BASE}{tag}/{name}"
+
+
 def check_latest() -> LatestCheck:
-    """Проверяет самый новый релиз (включая pre-release) и наличие установщика."""
+    """Ищет самый новый релиз (включая pre-release), у которого есть установщик."""
     try:
         with _open(FEED_URL, method="GET") as resp:
             text = resp.read().decode("utf-8", errors="replace")
@@ -97,21 +104,22 @@ def check_latest() -> LatestCheck:
         raise
     tags = parse_feed_tags(text)
     if not tags:
-        return LatestCheck(None, None, "На GitHub не найдено ни одного релиза с номером версии")
-    tag = tags[0]
-    version = tag.lstrip("v")
-    name = f"{ASSET_PREFIX}{version}.exe"
-    url = f"{DOWNLOAD_BASE}{tag}/{name}"
-    try:
-        with _open(url):
-            pass
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return LatestCheck(tag, None,
-                               f"Релиз {tag} есть, но файла {name} в нём нет. "
-                               "Проверьте, что сборка в Actions прошла успешно")
-        raise
-    return LatestCheck(tag, ReleaseInfo(version=version, name=name, url=url), "ok")
+        return LatestCheck(None, None, "В ленте GitHub нет релизов с номером версии")
+    missing = []
+    for tag in tags[:5]:
+        version, name, url = _installer_url(tag)
+        try:
+            with _open(url):
+                pass
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                missing.append(tag)
+                continue
+            raise
+        return LatestCheck(tag, ReleaseInfo(version=version, name=name, url=url), "ok")
+    return LatestCheck(tags[0], None,
+                       f"Релизы {', '.join(missing)} есть, но установщика zapret-app-setup-<версия>.exe в них нет. "
+                       "Проверьте, что сборка в Actions прошла успешно")
 
 
 def download(info: ReleaseInfo) -> Path:

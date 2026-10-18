@@ -178,6 +178,47 @@ class FeedTest(unittest.TestCase):
         self.assertEqual(app_updater.parse_feed_tags(feed), ["v0.4.3", "v0.4.2"])
 
 
+class CheckLatestTest(unittest.TestCase):
+    """Проверка всей цепочки поиска без сети: подменяем запросы к GitHub."""
+
+    FEED = ('<link href="https://github.com/iamplaho/zapret-app/releases/tag/v0.4.3"/>'
+            '<content>&lt;a href=&quot;https://github.com/iamplaho/zapret-app/releases/tag/v0.4.3&quot;&gt;</content>'
+            '<link href="https://github.com/iamplaho/zapret-app/releases/tag/v0.4.2"/>')
+
+    class _Resp:
+        def __init__(self, body=b""):
+            self._body = body
+        def read(self):
+            return self._body
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    def _fake_open(self, missing=()):
+        import urllib.error
+        def opener(url, method="HEAD", **_):
+            if url == app_updater.FEED_URL:
+                return self._Resp(self.FEED.encode("utf-8"))
+            if any(m in url for m in missing):
+                raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+            return self._Resp()
+        return opener
+
+    def test_finds_newest_release_with_installer(self):
+        with mock.patch.object(app_updater, "_open", side_effect=self._fake_open()):
+            res = app_updater.check_latest()
+        self.assertEqual(res.tag, "v0.4.3")
+        self.assertEqual(res.info.name, "zapret-app-setup-0.4.3.exe")
+        self.assertTrue(res.info.url.endswith("/v0.4.3/zapret-app-setup-0.4.3.exe"))
+
+    def test_skips_release_without_installer(self):
+        with mock.patch.object(app_updater, "_open", side_effect=self._fake_open(missing=["v0.4.3/"])):
+            res = app_updater.check_latest()
+        self.assertEqual(res.tag, "v0.4.2")
+        self.assertIsNotNone(res.info)
+
+
 class ReleaseUrlTest(unittest.TestCase):
     def test_tag_from_release_url(self):
         url = "https://github.com/iamplaho/zapret-app/releases/tag/v0.4.0"
