@@ -161,6 +161,23 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class DevBuildTest(unittest.TestCase):
+    def test_dev_build_is_older_than_any_release(self):
+        self.assertTrue(app_updater.is_newer("0.5.0", "dev-abc1234"))
+        self.assertFalse(app_updater.is_newer("dev-abc1234", "0.5.0"))
+        self.assertFalse(app_updater.is_newer("0.4.0", "0.4.0"))
+        self.assertTrue(app_updater.is_newer("0.5.0", "0.4.9"))
+
+
+class FeedTest(unittest.TestCase):
+    def test_feed_tags_sorted_newest_first(self):
+        feed = ('<link href="https://github.com/iamplaho/zapret-app/releases/tag/v0.4.2"/>'
+                '<link href="https://github.com/iamplaho/zapret-app/releases/tag/v0.4.3"/>'
+                '<link href="https://github.com/iamplaho/zapret-app/releases/tag/v0.4.3"/>'
+                '<link href="https://github.com/iamplaho/zapret-app/releases/tag/dev-abc"/>')
+        self.assertEqual(app_updater.parse_feed_tags(feed), ["v0.4.3", "v0.4.2"])
+
+
 class ReleaseUrlTest(unittest.TestCase):
     def test_tag_from_release_url(self):
         url = "https://github.com/iamplaho/zapret-app/releases/tag/v0.4.0"

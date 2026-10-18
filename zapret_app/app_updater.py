@@ -17,6 +17,7 @@ from . import __version__
 
 REPO = "iamplaho/zapret-app"
 LATEST_URL = f"https://github.com/{REPO}/releases/latest"
+FEED_URL = f"https://github.com/{REPO}/releases.atom"
 DOWNLOAD_BASE = f"https://github.com/{REPO}/releases/download/"
 ASSET_PREFIX = "zapret-app-setup-"
 TIMEOUT = 20
@@ -24,6 +25,7 @@ MIN_INSTALLER_SIZE = 1_000_000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 TAG_RE = re.compile(r"/releases/tag/([^/?#]+)$")
+TAG_IN_FEED = re.compile(r"/releases/tag/(v\d+\.\d+\.\d+[^\"<>\s?#]*)")
 
 
 @dataclass
@@ -39,8 +41,17 @@ def parse_version(text):
 
 
 def is_newer(remote: str, local: str = __version__) -> bool:
-    r, l = parse_version(remote), parse_version(local)
-    return r is not None and l is not None and r > l
+    """True, если релиз remote новее установленной версии local.
+
+    Сборка dev-<коммит> (не релиз) считается старее любого релиза.
+    """
+    r = parse_version(remote)
+    if r is None:
+        return False
+    l = parse_version(local)
+    if l is None:
+        return True
+    return r > l
 
 
 def tag_from_url(url: str):
@@ -54,17 +65,40 @@ def _open(url: str, method: str = "HEAD"):
     return urllib.request.urlopen(req, timeout=TIMEOUT)
 
 
-def fetch_latest():
-    """Возвращает ReleaseInfo или None, если релиза с установщиком нет."""
+@dataclass
+class LatestCheck:
+    tag: object          # тег последнего релиза или None
+    info: object         # ReleaseInfo, если установщик найден, иначе None
+    note: str            # понятное объяснение результата
+
+
+def parse_feed_tags(text: str) -> list:
+    """Теги релизов из ленты releases.atom, от новой версии к старой.
+
+    В ленте есть и pre-release, в отличие от /releases/latest.
+    """
+    tags = []
+    for match in TAG_IN_FEED.finditer(text or ""):
+        tag = match.group(1)
+        if tag not in tags and parse_version(tag):
+            tags.append(tag)
+    tags.sort(key=lambda t: parse_version(t), reverse=True)
+    return tags
+
+
+def check_latest() -> LatestCheck:
+    """Проверяет самый новый релиз (включая pre-release) и наличие установщика."""
     try:
-        with _open(LATEST_URL) as resp:
-            tag = tag_from_url(resp.geturl())
+        with _open(FEED_URL, method="GET") as resp:
+            text = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            return None
+            return LatestCheck(None, None, "Репозиторий не найден или релизов пока нет")
         raise
-    if not tag:
-        return None
+    tags = parse_feed_tags(text)
+    if not tags:
+        return LatestCheck(None, None, "На GitHub не найдено ни одного релиза с номером версии")
+    tag = tags[0]
     version = tag.lstrip("v")
     name = f"{ASSET_PREFIX}{version}.exe"
     url = f"{DOWNLOAD_BASE}{tag}/{name}"
@@ -73,9 +107,11 @@ def fetch_latest():
             pass
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            return None  # релиз есть, а установщика в нём нет
+            return LatestCheck(tag, None,
+                               f"Релиз {tag} есть, но файла {name} в нём нет. "
+                               "Проверьте, что сборка в Actions прошла успешно")
         raise
-    return ReleaseInfo(version=version, name=name, url=url)
+    return LatestCheck(tag, ReleaseInfo(version=version, name=name, url=url), "ok")
 
 
 def download(info: ReleaseInfo) -> Path:
