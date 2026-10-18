@@ -12,6 +12,7 @@ import customtkinter as ctk
 from . import __version__, app_updater, diagnostics, engine, fakes, hosts, paths, settings, strategies
 from . import system, tester, updater
 from .logpanel import LogPanel, small_button
+from .widgets import ScrollArea, TabBar, ToggleSwitch
 from .power_circle import PowerCircle
 from .theme import BG, BLACK, CARD, CARD_HI, FONT, MUTED, SOFT, TEXT, TRACK, WHITE
 
@@ -121,6 +122,7 @@ class App(ctk.CTk):
         self._pending_update = None
         self._lines = []
         self.vars = {}
+        self.switches = {}
         self.switch_titles = {}
         self.tray = None
 
@@ -213,20 +215,18 @@ class App(ctk.CTk):
     # ---------- компоновка ----------
 
     def _build(self):
-        self.tabs = ctk.CTkSegmentedButton(
-            self, values=["Главная", "Настройки", "Сервис"], command=self._show_tab, height=40,
-            corner_radius=0, font=font(13), fg_color=CARD, selected_color=TRACK,
-            selected_hover_color="#52525b", unselected_color=CARD, unselected_hover_color=CARD_HI,
-            text_color=TEXT, bg_color=BG)
+        self.tabs = TabBar(self, ["Главная", "Настройки", "Сервис"], self._on_tab_click)
         self.logpanel = LogPanel(self, on_toggle=self.toggle_log, on_clear=self.clear_log)
-        self.container = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
+        self.container = tk.Frame(self, bg=BG)
         self.frames = {
             "Главная": self._build_main(),
             "Настройки": self._build_settings(),
             "Сервис": self._build_service(),
         }
-        self.tabs.set("Главная")
-        self._show_tab("Главная")
+        self._tab = None
+        self._cur_frame = None
+        self._slide_job = None
+        self._show_tab("Главная", animate=False)
         self._layout()
 
     def _layout(self):
@@ -246,16 +246,60 @@ class App(ctk.CTk):
         self._layout()
         self.circle.set_active(self._tab == "Главная" and not self._log_expanded and self.winfo_viewable())
 
-    def _show_tab(self, name):
+    def _on_tab_click(self, name):
+        self._show_tab(name)
+
+    def _show_tab(self, name, animate=True):
+        if name == self._tab:
+            return
+        order = list(self.frames.keys())
+        old = self._cur_frame
+        new = self.frames[name]
+        direction = 1 if old is None or order.index(name) > order.index(self._tab) else -1
+        self._cancel_slide(keep=new)
         self._tab = name
-        for frame in self.frames.values():
-            frame.pack_forget()
-        self.frames[name].pack(fill="both", expand=True)
+        self._cur_frame = new
+        self.tabs.set(name)
         self.circle.set_active(name == "Главная" and self.winfo_viewable() and not self._log_expanded)
+        if not animate or old is None:
+            if old is not None:
+                old.place_forget()
+            new.place(x=0, y=0, relwidth=1, relheight=1)
+            new.lift()
+            return
+        width = max(self.container.winfo_width(), 1)
+        new.place(x=direction * width, y=0, relwidth=1, relheight=1)
+        new.lift()
+        self._slide_step(new, old, direction * width, 0, 0, width)
+
+    def _slide_step(self, new, old, start, end, step, width):
+        steps = 14
+        t = min(1.0, step / steps)
+        eased = 1 - (1 - t) ** 3
+        x = start + (end - start) * eased
+        new.place_configure(x=x)
+        if old is not None:
+            old.place_configure(x=-x * 0.25)
+        if t >= 1.0:
+            if old is not None:
+                old.place_forget()
+            new.place_configure(x=0)
+            self._slide_job = None
+            return
+        self._slide_job = self.after(15, lambda: self._slide_step(new, old, start, end, step + 1, width))
+
+    def _cancel_slide(self, keep):
+        if self._slide_job is not None:
+            self.after_cancel(self._slide_job)
+            self._slide_job = None
+        for frame in self.frames.values():
+            if frame is not keep:
+                frame.place_forget()
+        if keep is not None:
+            keep.place_configure(x=0)
 
     def _scroll(self):
-        return ctk.CTkScrollableFrame(self.container, fg_color=BG, corner_radius=0,
-                                      scrollbar_button_color=TRACK, scrollbar_button_hover_color="#52525b")
+        return ScrollArea(self.container, bg=BG)
 
     def _card(self, parent, **pack):
         frame = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=0)
@@ -289,7 +333,9 @@ class App(ctk.CTk):
             anchor="w", padx=18, pady=(14, 6))
         self.strategy_menu = ctk.CTkOptionMenu(
             card, values=[s["name"] for s in self.strategy_list], command=self.on_strategy_change,
-            height=40, **menu_style())
+            width=360, height=44, font=font(14), dropdown_font=font(13), fg_color=CARD_HI,
+            button_color=TRACK, button_hover_color="#52525b", text_color=TEXT,
+            dropdown_fg_color=CARD, dropdown_hover_color=CARD_HI, dropdown_text_color=TEXT)
         self.strategy_menu.pack(fill="x", padx=18, pady=(0, 16))
         self.strategy_menu.set(self._name_by_id(self.cfg["strategy"]))
 
@@ -309,13 +355,14 @@ class App(ctk.CTk):
         return f
 
     def _build_settings(self):
-        f = self._scroll()
+        area = self._scroll()
+        f = area.inner
 
         card = self._card(f, pady=(0, 12))
         self._section(card, "ОБХОД (bypass)")
         self._label(card, "Игровой фильтр (Game Filter) ускоряет игровые серверы и голосовой чат.")
         self.game_menu = ctk.CTkOptionMenu(card, values=list(GAME_LABELS.values()),
-                                           command=self.on_game_mode, height=40, **menu_style())
+                                           command=self.on_game_mode, width=346, height=40, **menu_style())
         self.game_menu.pack(fill="x", padx=18, pady=(0, 10))
         self.game_menu.set(GAME_LABELS[self.cfg["game_mode"]])
         row = ctk.CTkFrame(card, fg_color=CARD, corner_radius=0)
@@ -325,7 +372,7 @@ class App(ctk.CTk):
         self._label(card, "IPSet (ipset-all.txt) — IP-адреса, для которых работает обход. "
                           "Обычно оставьте «Полный список».")
         self.ipset_menu = ctk.CTkOptionMenu(card, values=list(IPSET_LABELS.values()),
-                                            command=self.on_ipset_mode, height=40, **menu_style())
+                                            command=self.on_ipset_mode, width=346, height=40, **menu_style())
         self.ipset_menu.pack(fill="x", padx=18, pady=(0, 16))
         self.ipset_menu.set(IPSET_LABELS.get(self._ipset_mode, IPSET_LABELS["loaded"]))
 
@@ -358,13 +405,13 @@ class App(ctk.CTk):
                       **secondary_button(CARD)).pack(side="left", fill="x", expand=True, padx=(0, 4))
         ctk.CTkButton(row, text="Папка данных (AppData)", height=40, command=lambda: self._open_folder(paths.DATA_DIR),
                       **secondary_button(CARD)).pack(side="right", fill="x", expand=True, padx=(4, 0))
-        return f
+        return area
 
     def _range_entry(self, parent, key, caption, side):
         box = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=0)
         box.pack(side=side, fill="x", expand=True, padx=(0 if side == "left" else 8, 0))
         ctk.CTkLabel(box, text=caption, font=font(11), text_color=MUTED).pack(anchor="w")
-        entry = ctk.CTkEntry(box, height=38, **entry_style(CARD))
+        entry = ctk.CTkEntry(box, width=160, height=38, **entry_style(CARD))
         entry.insert(0, self.cfg[key])
         entry.pack(fill="x")
         entry.bind("<Return>", lambda _e: self.on_range_commit(key, entry))
@@ -373,17 +420,22 @@ class App(ctk.CTk):
 
     def _switch(self, parent, key, title, desc):
         self.switch_titles[key] = title
-        row = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=0)
-        row.pack(fill="x", padx=18, pady=(6, 6))
+        row = tk.Frame(parent, bg=CARD)
+        row.pack(fill="x", padx=18, pady=7)
         var = tk.BooleanVar(value=bool(self.cfg[key]))
         self.vars[key] = var
-        ctk.CTkSwitch(row, text=title, variable=var, command=lambda: self.on_switch(key),
-                      **switch_style(CARD)).pack(anchor="w")
-        ctk.CTkLabel(row, text=desc, font=font(11), text_color=MUTED, anchor="w", justify="left",
-                     wraplength=WRAP - 50).pack(anchor="w", padx=(50, 0))
+        sw = ToggleSwitch(row, var, command=lambda: self.on_switch(key), bg=CARD)
+        sw.pack(side="left", anchor="n", pady=2)
+        self.switches[key] = sw
+        text = tk.Frame(row, bg=CARD)
+        text.pack(side="left", fill="x", expand=True, padx=(12, 0))
+        tk.Label(text, text=title, bg=CARD, fg=TEXT, font=(FONT, 12), anchor="w", justify="left").pack(anchor="w")
+        tk.Label(text, text=desc, bg=CARD, fg=MUTED, font=(FONT, 10), anchor="w", justify="left",
+                 wraplength=290).pack(anchor="w")
 
     def _build_service(self):
-        f = self._scroll()
+        area = self._scroll()
+        f = area.inner
 
         card = self._card(f, pady=(0, 12))
         self._section(card, "СЛУЖБА WINDOWS (service)")
@@ -414,11 +466,11 @@ class App(ctk.CTk):
         options = fakes.list_fakes() or ["нет файлов"]
         ctk.CTkLabel(card, text="Для Discord (ACTIVE_DISCORD_UDP.bin)", font=font(11), text_color=MUTED,
                      anchor="w").pack(anchor="w", padx=18)
-        self.fake_discord = ctk.CTkOptionMenu(card, values=options, height=40, **menu_style())
+        self.fake_discord = ctk.CTkOptionMenu(card, values=options, width=346, height=40, **menu_style())
         self.fake_discord.pack(fill="x", padx=18, pady=(4, 10))
         ctk.CTkLabel(card, text="Для игр (ACTIVE_GAME_UDP.bin)", font=font(11), text_color=MUTED,
                      anchor="w").pack(anchor="w", padx=18)
-        self.fake_game = ctk.CTkOptionMenu(card, values=options, height=40, **menu_style())
+        self.fake_game = ctk.CTkOptionMenu(card, values=options, width=346, height=40, **menu_style())
         self.fake_game.pack(fill="x", padx=18, pady=(4, 10))
         for kind, menu in (("discord", self.fake_discord), ("game", self.fake_game)):
             current = fakes.current(kind)
@@ -426,7 +478,7 @@ class App(ctk.CTk):
                 menu.set(current)
         ctk.CTkButton(card, text="Применить фейки (Apply)", height=42, command=self.apply_fakes,
                       **secondary_button(CARD)).pack(fill="x", padx=18, pady=(0, 16))
-        return f
+        return area
 
     # ---------- журнал ----------
 
@@ -672,7 +724,7 @@ class App(ctk.CTk):
                 system.set_autostart(value)
             except Exception as exc:  # noqa: BLE001
                 self.log(f"Автозапуск: {exc}", "err")
-                self.vars[key].set(not value)
+                self.switches[key].set(not value)
                 return
         self.cfg[key] = value
         settings.save(self.cfg)
@@ -884,9 +936,9 @@ class App(ctk.CTk):
         self.app_btn.configure(state="disabled")
         if manual:
             self.log("Проверяю новую версию программы на GitHub…", "update")
-        self._bg(app_updater.fetch_latest, lambda info, err: self._after_app_check(info, err, manual))
+        self._bg(app_updater.check_latest, lambda res, err: self._after_app_check(res, err, manual))
 
-    def _after_app_check(self, info, error, manual):
+    def _after_app_check(self, res, error, manual):
         self._busy_app = False
         self.app_btn.configure(state="normal")
         if error:
@@ -894,18 +946,25 @@ class App(ctk.CTk):
             return
         self.cfg["last_app_ts"] = time.time()
         settings.save(self.cfg)
-        self._latest = info.version if info else None
+        self._latest = res.tag.lstrip("v") if res.tag else None
         self._refresh_update_labels()
-        if info is None or not app_updater.is_newer(info.version):
-            if manual:
-                self.log(f"Программа актуальна: версия {__version__}", "update")
+        if res.info is None:
+            if manual or res.tag:
+                self.log(res.note, "warn")
             return
-        self._pending_update = info
-        self.log(f"Доступна новая версия программы: {info.version} (установлена {__version__})", "update")
+        local = __version__
+        dev_note = " (dev-сборка, не релиз)" if app_updater.parse_version(local) is None else ""
+        if not app_updater.is_newer(res.info.version, local):
+            if manual:
+                self.log(f"Установлена {local}{dev_note}, последний релиз {res.tag}: "
+                         "обновление не нужно", "update")
+            return
+        self._pending_update = res.info
+        self.log(f"Доступна версия {res.info.version} (установлена {local}{dev_note})", "update")
         if self.cfg["auto_update_app"]:
-            self._install_update(info)
+            self._install_update(res.info)
         else:
-            self.banner_label.configure(text=f"Доступна версия {info.version}. Установить?")
+            self.banner_label.configure(text=f"Доступна версия {res.info.version}. Установить?")
             self.banner.pack(fill="x", pady=(10, 0))
 
     def _install_pending(self):
