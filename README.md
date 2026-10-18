@@ -58,22 +58,6 @@
 Если обход работал, он включится снова. Списки доменов и IP обновляются отдельно, из
 официального репозитория.
 
-## Для разработчиков: выпуск версии
-
-1. Загрузите изменения в ветку `main` (GitHub Desktop или **Add file → Upload files**).
-2. Откройте **Actions** и дождитесь зелёной сборки.
-3. Создайте релиз: **Releases → Draft a new release → Choose a tag → `v0.3.0` (Create new tag)** → **Publish release**.
-4. Через 5–10 минут установщик прикрепится к релизу. Программы у пользователей увидят его при
-   следующем запуске.
-
-Локальная сборка на Windows: установите Python 3.10+, затем выполните:
-
-```bat
-python -m pip install -r requirements.txt pyinstaller
-python -m PyInstaller --noconfirm --clean zapret-app.spec
-```
-
-Для установщика нужен Inno Setup 6: `ISCC.exe installer\zapret-app.iss`.
 
 ## Структура проекта
 
