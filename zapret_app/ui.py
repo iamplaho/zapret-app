@@ -243,46 +243,41 @@ class App(ctk.CTk):
             self.container.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
     def toggle_log(self):
-        """Журнал плавно растягивается на всё окно или возвращается вниз."""
+        """Журнал плавно растягивается на всё окно или возвращается вниз.
+
+        Анимация только через pack (высота текстовой области), без place:
+        смешивание place и pack раньше ломало отображение журнала.
+        """
         if self._log_anim_job is not None:
             return
         expanding = not self._log_expanded
         self._log_expanded = expanding
         self.logpanel.set_expanded(expanding)
         self.circle.set_active(False)
-        width = max(self.winfo_width(), 1)
-        height = max(self.winfo_height(), 1)
+        self._log_anim_job = True  # блокируем повторные нажатия на время анимации
         if expanding:
-            self._log_normal_h = max(self.logpanel.winfo_height(), 120)
-            y0 = self.logpanel.winfo_y()
-            h0 = self.logpanel.winfo_height()
-            y1, h1 = 16, height - 32
+            self._log_normal_h = max(self.logpanel.box.winfo_height(), 70)
+            start = self._log_normal_h
+            target = max(self.winfo_height() - 150, 200)
         else:
-            y0 = 16
-            h0 = height - 32
-            h1 = self._log_normal_h
-            y1 = height - h1 - 16
+            start = self.logpanel.box.winfo_height()
+            target = self._log_normal_h
             self.tabs.pack(fill="x", padx=20, pady=(16, 10))
             self.container.pack(fill="both", expand=True, padx=20, pady=(0, 10))
-        self.logpanel.pack_forget()
-        self.logpanel.place(x=20, y=y0, width=width - 40, height=h0)
-        self.logpanel.lift()
-        self._anim_log(y0, h0, y1, h1, 0)
+        self._anim_log(start, target, 0)
 
-    def _anim_log(self, y0, h0, y1, h1, step):
+    def _anim_log(self, start, target, step):
         steps = 18
         t = min(1.0, step / steps)
         eased = 1 - (1 - t) ** 3
-        y = y0 + (y1 - y0) * eased
-        h = h0 + (h1 - h0) * eased
-        self.logpanel.place_configure(y=int(y), height=max(int(h), 60))
+        height = start + (target - start) * eased
+        self.logpanel.box.configure(height=max(int(height), 40))
         if t >= 1.0:
             self._log_anim_job = None
-            self.logpanel.place_forget()
             self._layout()
             self.circle.set_active(self._tab == "Главная" and self.winfo_viewable() and not self._log_expanded)
             return
-        self._log_anim_job = self.after(14, lambda: self._anim_log(y0, h0, y1, h1, step + 1))
+        self._log_anim_job = self.after(14, lambda: self._anim_log(start, target, step + 1))
 
     def _on_tab_click(self, name):
         self._show_tab(name)
