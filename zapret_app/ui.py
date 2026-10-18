@@ -115,6 +115,8 @@ class App(ctk.CTk):
         self._busy_app = False
         self._latest = None
         self._log_expanded = False
+        self._log_anim_job = None
+        self._log_normal_h = 150
         self._tab = "Главная"
         self._ipset_mode = updater.ipset_mode()
         self._cancel = threading.Event()
@@ -241,21 +243,52 @@ class App(ctk.CTk):
             self.container.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
     def toggle_log(self):
-        self._log_expanded = not self._log_expanded
-        self.logpanel.set_expanded(self._log_expanded)
-        self._layout()
-        self.circle.set_active(self._tab == "Главная" and not self._log_expanded and self.winfo_viewable())
+        """Журнал плавно растягивается на всё окно или возвращается вниз."""
+        if self._log_anim_job is not None:
+            return
+        expanding = not self._log_expanded
+        self._log_expanded = expanding
+        self.logpanel.set_expanded(expanding)
+        self.circle.set_active(False)
+        width = max(self.winfo_width(), 1)
+        height = max(self.winfo_height(), 1)
+        if expanding:
+            self._log_normal_h = max(self.logpanel.winfo_height(), 120)
+            y0 = self.logpanel.winfo_y()
+            h0 = self.logpanel.winfo_height()
+            y1, h1 = 16, height - 32
+        else:
+            y0 = 16
+            h0 = height - 32
+            h1 = self._log_normal_h
+            y1 = height - h1 - 16
+            self.tabs.pack(fill="x", padx=20, pady=(16, 10))
+            self.container.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        self.logpanel.pack_forget()
+        self.logpanel.place(x=20, y=y0, width=width - 40, height=h0)
+        self.logpanel.lift()
+        self._anim_log(y0, h0, y1, h1, 0)
 
-    def _on_tab_click(self, name):
-        self._show_tab(name)
+    def _anim_log(self, y0, h0, y1, h1, step):
+        steps = 18
+        t = min(1.0, step / steps)
+        eased = 1 - (1 - t) ** 3
+        y = y0 + (y1 - y0) * eased
+        h = h0 + (h1 - h0) * eased
+        self.logpanel.place_configure(y=int(y), height=max(int(h), 60))
+        if t >= 1.0:
+            self._log_anim_job = None
+            self.logpanel.place_forget()
+            self._layout()
+            self.circle.set_active(self._tab == "Главная" and self.winfo_viewable() and not self._log_expanded)
+            return
+        self._log_anim_job = self.after(14, lambda: self._anim_log(y0, h0, y1, h1, step + 1))
 
     def _show_tab(self, name, animate=True):
         if name == self._tab:
             return
-        order = list(self.frames.keys())
         old = self._cur_frame
         new = self.frames[name]
-        direction = 1 if old is None or order.index(name) > order.index(self._tab) else -1
         self._cancel_slide(keep=new)
         self._tab = name
         self._cur_frame = new
@@ -267,26 +300,25 @@ class App(ctk.CTk):
             new.place(x=0, y=0, relwidth=1, relheight=1)
             new.lift()
             return
-        width = max(self.container.winfo_width(), 1)
-        new.place(x=direction * width, y=0, relwidth=1, relheight=1)
+        height = max(self.container.winfo_height(), 1)
+        new.place(x=0, y=-height, relwidth=1, relheight=1)
         new.lift()
-        self._slide_step(new, old, direction * width, 0, 0, width)
+        self._slide_step(new, old, -height, 0, 0)
 
-    def _slide_step(self, new, old, start, end, step, width):
-        steps = 14
+    def _slide_step(self, new, old, start, end, step):
+        """Страница выплывает сверху вниз: быстро в начале, мягко в конце."""
+        steps = 16
         t = min(1.0, step / steps)
         eased = 1 - (1 - t) ** 3
-        x = start + (end - start) * eased
-        new.place_configure(x=x)
-        if old is not None:
-            old.place_configure(x=-x * 0.25)
+        y = start + (end - start) * eased
+        new.place_configure(y=y)
         if t >= 1.0:
             if old is not None:
                 old.place_forget()
-            new.place_configure(x=0)
+            new.place_configure(y=0)
             self._slide_job = None
             return
-        self._slide_job = self.after(15, lambda: self._slide_step(new, old, start, end, step + 1, width))
+        self._slide_job = self.after(14, lambda: self._slide_step(new, old, start, end, step + 1))
 
     def _cancel_slide(self, keep):
         if self._slide_job is not None:
@@ -296,7 +328,7 @@ class App(ctk.CTk):
             if frame is not keep:
                 frame.place_forget()
         if keep is not None:
-            keep.place_configure(x=0)
+            keep.place_configure(x=0, y=0)
 
     def _scroll(self):
         return ScrollArea(self.container, bg=BG)
@@ -339,12 +371,14 @@ class App(ctk.CTk):
         self.strategy_menu.pack(fill="x", padx=18, pady=(0, 16))
         self.strategy_menu.set(self._name_by_id(self.cfg["strategy"]))
 
-        self.test_btn = ctk.CTkButton(f, text="Проверить стратегию (test)", height=44,
+        btn_row = tk.Frame(f, bg=BG)
+        btn_row.pack(fill="x")
+        self.test_btn = ctk.CTkButton(btn_row, text="Проверить стратегию", width=176, height=44,
                                       command=self.test_current, **secondary_button())
-        self.test_btn.pack(fill="x", pady=(0, 8))
-        self.best_btn = ctk.CTkButton(f, text="Подобрать лучшую (test all)", height=44,
+        self.test_btn.pack(side="left", padx=(0, 4))
+        self.best_btn = ctk.CTkButton(btn_row, text="Подобрать лучшую", width=176, height=44,
                                       command=self.test_all, **secondary_button())
-        self.best_btn.pack(fill="x")
+        self.best_btn.pack(side="right", padx=(4, 0))
 
         self.banner = ctk.CTkFrame(f, fg_color=CARD, corner_radius=0)
         self.banner_label = ctk.CTkLabel(self.banner, text="", font=font(12), text_color=TEXT,
@@ -807,7 +841,7 @@ class App(ctk.CTk):
             self.test_btn.configure(text="Остановить проверку", state="normal")
             self.best_btn.configure(state="disabled")
         else:
-            self.test_btn.configure(text="Проверить стратегию (test)", state="normal")
+            self.test_btn.configure(text="Проверить стратегию", state="normal")
             self.best_btn.configure(state="normal")
 
     def test_current(self):

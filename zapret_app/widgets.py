@@ -65,6 +65,17 @@ class ToggleSwitch(tk.Canvas):
         self.create_rectangle(x, pad, x + size, pad + size, fill=knob, outline="")
 
 
+_SCROLL_AREAS = []
+
+
+def _global_wheel(event):
+    """Одна привязка на всё окно: прокручивает видимую область, над которой стоит курсор."""
+    for area in list(_SCROLL_AREAS):
+        if area.winfo_ismapped() and area._pointer_inside():
+            area.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+            return
+
+
 class ScrollArea(tk.Frame):
     """Прокрутка: внутрь кладите виджеты в self.inner."""
 
@@ -82,10 +93,11 @@ class ScrollArea(tk.Frame):
         self.canvas.configure(yscrollcommand=self._on_scroll)
         self.inner.bind("<Configure>", self._on_inner)
         self.canvas.bind("<Configure>", self._on_canvas)
-        self.inner.bind("<Enter>", lambda _e: self._bind_wheel(True))
-        self.inner.bind("<Leave>", lambda _e: self._bind_wheel(False))
         self.bar.bind("<Button-1>", self._drag)
         self.bar.bind("<B1-Motion>", self._drag)
+        if not _SCROLL_AREAS:
+            self.bind_all("<MouseWheel>", _global_wheel)
+        _SCROLL_AREAS.append(self)
 
     def _on_inner(self, event):
         self.canvas.configure(scrollregion=(0, 0, event.width, event.height))
@@ -107,14 +119,10 @@ class ScrollArea(tk.Frame):
         height = self.bar.winfo_height() or 1
         self.canvas.yview_moveto(max(0.0, min(1.0, event.y / height)))
 
-    def _bind_wheel(self, on: bool):
-        if on:
-            self.bind_all("<MouseWheel>", self._wheel)
-        else:
-            self.unbind_all("<MouseWheel>")
-
-    def _wheel(self, event):
-        self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+    def _pointer_inside(self) -> bool:
+        px, py = self.winfo_pointerxy()
+        x0, y0 = self.winfo_rootx(), self.winfo_rooty()
+        return x0 <= px < x0 + self.winfo_width() and y0 <= py < y0 + self.winfo_height()
 
 
 class TabBar(tk.Frame):

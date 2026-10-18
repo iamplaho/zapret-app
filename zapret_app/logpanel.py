@@ -26,7 +26,7 @@ class LogPanel(ctk.CTkFrame):
         self.expand_btn = ctk.CTkButton(header, text="Развернуть", width=104, height=26,
                                         command=on_toggle, **small_button())
         self.expand_btn.pack(side="right", padx=(0, 6))
-        self.box = ctk.CTkTextbox(self, corner_radius=0, fg_color=BG, border_width=0,
+        self.box = ctk.CTkTextbox(self, height=70, corner_radius=0, fg_color=BG, border_width=0,
                                   text_color=TEXT, font=ctk.CTkFont(family="Consolas", size=11), state="disabled")
         self.box.pack(fill="both", expand=True, padx=12, pady=(8, 12))
         self._text = self.box._textbox  # tk.Text: нужен для цветных тегов и подсветки

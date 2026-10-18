@@ -10,10 +10,10 @@ import tkinter as tk
 from .theme import BG, BLACK, MUTED, TRACK, WHITE, hex_to_rgb, lerp, rgb_to_hex
 
 W = 404
-H = 220
+H = 190
 CX = W / 2
 CY = H / 2
-RADIUS = 56
+RADIUS = 52
 HIT_RADIUS = RADIUS + 6   # область клика — ровно круг с небольшим запасом
 PARTICLES = 30
 FRAME_MS = 33
